@@ -1,0 +1,36 @@
+diff --git a/liblog/logger_write.cpp b/liblog/logger_write.cpp
+index 3c6ccd0..d6b0d3f 100644
+--- a/liblog/logger_write.cpp
++++ b/liblog/logger_write.cpp
+@@ -41,6 +41,8 @@
+ #include "logger.h"
+ #include "uio.h"
+ 
++#undef __ANDROID__
++
+ #ifdef __ANDROID__
+ #include "logd_writer.h"
+ #include "pmsg_writer.h"
+@@ -335,7 +337,22 @@ void __android_log_stderr_logger(const struct __android_log_message* log_message
+ }
+ 
+ void __android_log_logd_logger(const struct __android_log_message* log_message) {
++#if defined(__ANDROID__) && __ANDROID_API__ >= 37
+   __android_log_logd_logger_with_timestamp(log_message, nullptr);
++#else
++  if (log_to_file_if_overridden(log_message)) return;
++
++  int buffer_id = log_message->buffer_id == LOG_ID_DEFAULT ? LOG_ID_MAIN : log_message->buffer_id;
++  struct iovec vec[3];
++  vec[0].iov_base =
++      const_cast<unsigned char*>(reinterpret_cast<const unsigned char*>(&log_message->priority));
++  vec[0].iov_len = 1;
++  vec[1].iov_base = const_cast<void*>(static_cast<const void*>(log_message->tag));
++  vec[1].iov_len = strlen(log_message->tag) + 1;
++  vec[2].iov_base = const_cast<void*>(static_cast<const void*>(log_message->message));
++  vec[2].iov_len = strlen(log_message->message) + 1;
++  write_to_log(static_cast<log_id_t>(buffer_id), vec, 3, nullptr);
++#endif
+ }
+ 
+ void __android_log_logd_logger_with_timestamp(const struct __android_log_message* log_message,

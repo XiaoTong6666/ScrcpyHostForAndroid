@@ -1,0 +1,738 @@
+diff --git a/adb.bash b/adb.bash
+index ad62eba..2882463 100644
+--- a/adb.bash
++++ b/adb.bash
+@@ -15,7 +15,7 @@
+ # limitations under the License.
+ #
+ 
+-_adb() {
++_termux_adb() {
+     if ! check_type "$1" >/dev/null; then
+         return
+     fi
+@@ -77,7 +77,7 @@ _adb() {
+             COMPREPLY=( $(compgen -W "$OPTIONS $COMMAND" -- "$cur") )
+             ;;
+         OPT_SERIAL_ARG)
+-            _adb_devices
++            _termux_adb_devices
+             ;;
+         COMMAND)
+             if [[ $i -eq $COMP_CWORD ]]; then
+@@ -86,19 +86,19 @@ _adb() {
+                 i=$((i+1))
+                 case "${cur}" in
+                     disconnect)
+-                        _adb_devices
++                        _termux_adb_devices
+                         ;;
+                     install)
+-                        _adb_cmd_install "$serial" $i
++                        _termux_adb_cmd_install "$serial" $i
+                         ;;
+                     sideload)
+-                        _adb_cmd_sideload "$serial" $i
++                        _termux_adb_cmd_sideload "$serial" $i
+                         ;;
+                     pull)
+-                        _adb_cmd_pull "$serial" $i
++                        _termux_adb_cmd_pull "$serial" $i
+                         ;;
+                     push)
+-                        _adb_cmd_push "$serial" $i
++                        _termux_adb_cmd_push "$serial" $i
+                         ;;
+                     reboot)
+                         if [[ $COMP_CWORD == $i ]]; then
+@@ -107,10 +107,10 @@ _adb() {
+                         fi
+                         ;;
+                     shell)
+-                        _adb_cmd_shell "$serial" $i
++                        _termux_adb_cmd_shell "$serial" $i
+                         ;;
+                     uninstall)
+-                        _adb_cmd_uninstall "$serial" $i
++                        _termux_adb_cmd_uninstall "$serial" $i
+                         ;;
+                 esac
+             fi
+@@ -120,13 +120,13 @@ _adb() {
+     return 0
+ }
+ 
+-_adb_devices() {
+-    local devices=$(command adb devices 2> /dev/null | grep -v "List of devices" | awk '{ print $1 }')
++_termux_adb_devices() {
++    local devices=$(command termux-adb devices 2> /dev/null | grep -v "List of devices" | awk '{ print $1 }')
+     COMPREPLY=( $(compgen -W "${devices}" -- ${cur}) )
+     return
+ }
+ 
+-_adb_cmd_install() {
++_termux_adb_cmd_install() {
+     local serial i cur where
+ 
+     serial=$1
+@@ -152,10 +152,10 @@ _adb_cmd_install() {
+         return
+     fi
+ 
+-    _adb_util_complete_local_file "${cur}" '!*.apk'
++    _termux_adb_util_complete_local_file "${cur}" '!*.apk'
+ }
+ 
+-_adb_cmd_sideload() {
++_termux_adb_cmd_sideload() {
+     local serial i cur
+ 
+     serial=$1
+@@ -163,10 +163,10 @@ _adb_cmd_sideload() {
+ 
+     cur="${COMP_WORDS[COMP_CWORD]}"
+ 
+-    _adb_util_complete_local_file "${cur}" '!*.zip'
++    _termux_adb_util_complete_local_file "${cur}" '!*.zip'
+ }
+ 
+-_adb_cmd_push() {
++_termux_adb_cmd_push() {
+     local serial IFS=$'\n' i cur
+ 
+     serial=$1
+@@ -175,16 +175,16 @@ _adb_cmd_push() {
+     cur="${COMP_WORDS[COMP_CWORD]}"
+ 
+     if [[ $COMP_CWORD == $i ]]; then
+-        _adb_util_complete_local_file "${cur}"
++        _termux_adb_util_complete_local_file "${cur}"
+     elif [[ $COMP_CWORD == $(($i+1)) ]]; then
+         if [ "${cur}" == "" ]; then
+             cur="/"
+         fi
+-        _adb_util_list_files $serial "${cur}"
++        _termux_adb_util_list_files $serial "${cur}"
+     fi
+ }
+ 
+-_adb_cmd_pull() {
++_termux_adb_cmd_pull() {
+     local serial IFS=$'\n' i cur
+ 
+     serial=$1
+@@ -196,13 +196,13 @@ _adb_cmd_pull() {
+         if [ "${cur}" == "" ]; then
+             cur="/"
+         fi
+-        _adb_util_list_files $serial "${cur}"
++        _termux_adb_util_list_files $serial "${cur}"
+     elif [[ $COMP_CWORD == $(($i+1)) ]]; then
+-        _adb_util_complete_local_file "${cur}"
++        _termux_adb_util_complete_local_file "${cur}"
+     fi
+ }
+ 
+-_adb_cmd_shell() {
++_termux_adb_cmd_shell() {
+     local serial IFS=$'\n' i cur
+     local -a args
+ 
+@@ -215,8 +215,8 @@ _adb_cmd_shell() {
+     fi
+ 
+     if [[ $i -eq $COMP_CWORD && ${cur:0:1} != "/" ]]; then
+-        paths=$(command adb ${args[@]} shell echo '$'PATH 2> /dev/null | tr -d '\r' | tr : '\n')
+-        COMMAND=$(command adb ${args[@]} shell ls $paths '2>' /dev/null | tr -d '\r' | {
++        paths=$(command termux-adb ${args[@]} shell echo '$'PATH 2> /dev/null | tr -d '\r' | tr : '\n')
++        COMMAND=$(command termux-adb ${args[@]} shell ls $paths '2>' /dev/null | tr -d '\r' | {
+             while read -r tmp; do
+                 command=${tmp##*/}
+                 printf '%s\n' "$command"
+@@ -229,22 +229,22 @@ _adb_cmd_shell() {
+     i=$((i+1))
+     case "$cur" in
+         ls)
+-            _adb_shell_file_command $serial $i "--color -A -C -F -H -L -R -S -Z -a -c -d -f -h -i -k -l -m -n -p -q -r -s -t -u -x -1"
++            _termux_adb_shell_file_command $serial $i "--color -A -C -F -H -L -R -S -Z -a -c -d -f -h -i -k -l -m -n -p -q -r -s -t -u -x -1"
+             ;;
+         cat)
+-            _adb_shell_file_command $serial $i "-h -e -t -u -v"
++            _termux_adb_shell_file_command $serial $i "-h -e -t -u -v"
+             ;;
+         dumpsys)
+-            _adb_cmd_shell_dumpsys "$serial" $i
++            _termux_adb_cmd_shell_dumpsys "$serial" $i
+             ;;
+         am)
+-            _adb_cmd_shell_am "$serial" $i
++            _termux_adb_cmd_shell_am "$serial" $i
+             ;;
+         pm)
+-            _adb_cmd_shell_pm "$serial" $i
++            _termux_adb_cmd_shell_pm "$serial" $i
+             ;;
+         /*)
+-            _adb_util_list_files $serial "$cur"
++            _termux_adb_util_list_files $serial "$cur"
+             ;;
+         *)
+             COMPREPLY=( )
+@@ -254,7 +254,7 @@ _adb_cmd_shell() {
+     return 0
+ }
+ 
+-_adb_cmd_shell_dumpsys() {
++_termux_adb_cmd_shell_dumpsys() {
+     local serial i cur
+     local -a args
+     local candidates
+@@ -271,7 +271,7 @@ _adb_cmd_shell_dumpsys() {
+     if (( $i == $COMP_CWORD )) ; then
+         cur="${COMP_WORDS[COMP_CWORD]}"
+         # First line is a header, so need "1d".
+-        candidates=$(command adb ${args[@]} shell dumpsys -l 2> /dev/null | sed -e '1d;s/^  *//' | tr -d '\r')
++        candidates=$(command termux-adb ${args[@]} shell dumpsys -l 2> /dev/null | sed -e '1d;s/^  *//' | tr -d '\r')
+         candidates="-l $candidates"
+         COMPREPLY=( $(compgen -W "$candidates" -- "$cur") )
+         return 0
+@@ -281,7 +281,7 @@ _adb_cmd_shell_dumpsys() {
+     return 0
+ }
+ 
+-_adb_cmd_shell_am() {
++_termux_adb_cmd_shell_am() {
+     local serial i cur
+     local candidates
+ 
+@@ -302,7 +302,7 @@ _adb_cmd_shell_am() {
+ }
+ 
+ 
+-_adb_cmd_shell_pm() {
++_termux_adb_cmd_shell_pm() {
+     local serial i cur
+     local candidates
+ 
+@@ -339,7 +339,7 @@ _adb_cmd_shell_pm() {
+     return 0
+ }
+ 
+-_adb_cmd_uninstall() {
++_termux_adb_cmd_uninstall() {
+     local serial i where cur packages
+ 
+     serial=$1
+@@ -368,7 +368,7 @@ _adb_cmd_uninstall() {
+     fi
+ 
+     packages="$(
+-        command adb ${args[@]} shell pm list packages '2>' /dev/null 2> /dev/null | tr -d '\r' | {
++        command termux-adb ${args[@]} shell pm list packages '2>' /dev/null 2> /dev/null | tr -d '\r' | {
+             while read -r tmp; do
+                 local package=${tmp#package:}
+                 echo -n "${package} "
+@@ -379,7 +379,7 @@ _adb_cmd_uninstall() {
+     COMPREPLY=( ${COMPREPLY[@]:-} $(compgen -W "${packages}" -- "${cur}") )
+ }
+ 
+-_adb_shell_file_command() {
++_termux_adb_shell_file_command() {
+     local serial i cur file options
+     local -a args
+ 
+@@ -415,14 +415,14 @@ _adb_shell_file_command() {
+             COMPREPLY=( $(compgen -W "$options" -- "$cur") )
+             ;;
+         FILE)
+-            _adb_util_list_files $serial "$file"
++            _termux_adb_util_list_files $serial "$file"
+             ;;
+     esac
+ 
+     return 0
+ }
+ 
+-_adb_util_list_files() {
++_termux_adb_util_list_files() {
+     local serial dir IFS=$'\n'
+     local -a toks
+     local -a args
+@@ -434,9 +434,9 @@ _adb_util_list_files() {
+         args=(-s $serial)
+     fi
+ 
+-    if [[ $( command adb ${args[@]} shell ls -dF / '2>/dev/null' | tr -d '\r' ) == "d /" ]] ; then
++    if [[ $( command termux-adb ${args[@]} shell ls -dF / '2>/dev/null' | tr -d '\r' ) == "d /" ]] ; then
+         toks=( ${toks[@]-} $(
+-            command adb ${args[@]} shell ls -dF ${file}"*" '2>' /dev/null 2> /dev/null | tr -d '\r' | {
++            command termux-adb ${args[@]} shell ls -dF ${file}"*" '2>' /dev/null 2> /dev/null | tr -d '\r' | {
+                 while read -r tmp; do
+                     filetype=${tmp%% *}
+                     filename=${tmp:${#filetype}+1}
+@@ -450,7 +450,7 @@ _adb_util_list_files() {
+         ))
+     else
+         toks=( ${toks[@]-} $(
+-            command adb ${args[@]} shell ls -dp ${file}"*" '2>/dev/null' 2> /dev/null | tr -d '\r'
++            command termux-adb ${args[@]} shell ls -dp ${file}"*" '2>/dev/null' 2> /dev/null | tr -d '\r'
+         ))
+     fi
+ 
+@@ -462,7 +462,7 @@ _adb_util_list_files() {
+     COMPREPLY=( ${COMPREPLY[@]:-} "${toks[@]}" )
+ }
+ 
+-_adb_util_complete_local_file()
++_termux_adb_util_complete_local_file()
+ {
+     local file xspec i j IFS=$'\n'
+     local -a dirs files
+@@ -513,7 +513,7 @@ _adb_util_complete_local_file()
+ 
+ 
+ if [[ $(check_type compopt) == "builtin" ]]; then
+-    complete -F _adb adb
++    complete -F _termux_adb termux-adb
+ else
+-    complete -o nospace -F _adb adb
++    complete -o nospace -F _termux_adb termux-adb
+ fi
+diff --git a/adb_mdns.h b/adb_mdns.h
+index e2da4b5..335af5e 100644
+--- a/adb_mdns.h
++++ b/adb_mdns.h
+@@ -48,7 +48,10 @@ extern const char* _Nonnull kADBDNSServices[kNumADBDNSServices];
+ extern const char* _Nonnull kADBDNSServiceTxtRecords[kNumADBDNSServices];
+ 
+ #if ADB_HOST
+-#include "client/openscreen/mdns_service_info.h"
++namespace mdns {
++struct ServiceInfo;
++}  // namespace mdns
++
+ // ADB Secure DNS service interface. Used to query what ADB Secure DNS services have been
+ // resolved, and to run some kind of callback for each one.
+ using adb_secure_foreach_service_callback = std::function<void(const mdns::ServiceInfo& si)>;
+diff --git a/client/adb_wifi_termux_stub.cpp b/client/adb_wifi_termux_stub.cpp
+new file mode 100644
+index 0000000..9859307
+--- /dev/null
++++ b/client/adb_wifi_termux_stub.cpp
+@@ -0,0 +1,13 @@
++/*
++ * Pairing is not available in the Android-target TCP-only adb build.
++ */
++
++#include "adb_wifi.h"
++
++void adb_wifi_pair_device(const std::string&, const std::string&, std::string& response) {
++    response = "adb pair is unavailable in this Android build";
++}
++
++bool adb_wifi_is_known_host(const std::string&) {
++    return false;
++}
+diff --git a/client/commandline.cpp b/client/commandline.cpp
+index 5cd3ab6..2b42645 100644
+--- a/client/commandline.cpp
++++ b/client/commandline.cpp
+@@ -65,7 +65,6 @@
+ #include "bugreport.h"
+ #include "client/file_sync_client.h"
+ #include "commandline.h"
+-#include "fastdeploy.h"
+ #include "incremental_server.h"
+ #include "services.h"
+ #include "shell_protocol.h"
+diff --git a/client/fastdeploy.h b/client/fastdeploy.h
+index 830aeb2..79a90fb 100644
+--- a/client/fastdeploy.h
++++ b/client/fastdeploy.h
+@@ -18,7 +18,13 @@
+ 
+ #include "adb_unique_fd.h"
+ 
++#if defined(ANDROID_TOOLS_TERMUX_ADB)
++namespace com::android::fastdeploy {
++struct APKMetaData {};
++}  // namespace com::android::fastdeploy
++#else
+ #include "fastdeploy/proto/ApkEntry.pb.h"
++#endif
+ 
+ #include <optional>
+ #include <string>
+diff --git a/client/fastdeploy_termux_stub.cpp b/client/fastdeploy_termux_stub.cpp
+new file mode 100644
+index 0000000..57a249e
+--- /dev/null
++++ b/client/fastdeploy_termux_stub.cpp
+@@ -0,0 +1,27 @@
++/*
++ * Minimal fastdeploy stubs for Android-target TCP-only adb builds.
++ */
++
++#include "fastdeploy.h"
++
++void fastdeploy_set_agent_update_strategy(FastDeploy_AgentUpdateStrategy) {}
++
++int get_device_api_level() {
++    return 0;
++}
++
++std::optional<com::android::fastdeploy::APKMetaData> extract_metadata(const char*) {
++    return std::nullopt;
++}
++
++unique_fd install_patch(int, const char**) {
++    return unique_fd();
++}
++
++unique_fd apply_patch_on_device(const char*) {
++    return unique_fd();
++}
++
++int stream_patch(const char*, com::android::fastdeploy::APKMetaData, unique_fd) {
++    return -1;
++}
+diff --git a/client/main.cpp b/client/main.cpp
+index 50a60a7..b7bf4b2 100644
+--- a/client/main.cpp
++++ b/client/main.cpp
+@@ -16,6 +16,7 @@
+ 
+ #define TRACE_TAG ADB
+ 
++#include "termux_adb.h"
+ #include "sysdeps.h"
+ 
+ #include <signal.h>
+@@ -40,7 +41,9 @@
+ #include "client/mdns_utils.h"
+ #include "client/transport_client.h"
+ #include "client/usb.h"
++#if !defined(__ANDROID__) || __ANDROID_API__ >= 30
+ #include "client/usb_libusb_hotplug.h"
++#endif
+ #include "commandline.h"
+ #include "sysdeps/chrono.h"
+ #include "transport.h"
+@@ -129,6 +132,7 @@ int adb_server_main(int is_daemon, const std::string& socket_spec, const char* o
+     if (is_daemon) {
+         close_stdin();
+         setup_daemon_logging();
++        termuxadb::start();
+     }
+ 
+     atexit(adb_server_cleanup);
+@@ -140,11 +144,15 @@ int adb_server_main(int is_daemon, const std::string& socket_spec, const char* o
+     }
+ 
+     if (!getenv("ADB_USB") || strcmp(getenv("ADB_USB"), "0") != 0) {
++#if defined(__ANDROID__) && __ANDROID_API__ < 30
++        usb_init();
++#else
+         if (is_libusb_enabled()) {
+             libusb::usb_init();
+         } else {
+             usb_init();
+         }
++#endif
+     } else {
+         adb_notify_device_scan_complete();
+     }
+@@ -248,5 +256,8 @@ int main(int argc, char* argv[], char* envp[]) {
+     __adb_argv = const_cast<const char**>(argv);
+     __adb_envp = const_cast<const char**>(envp);
+     adb_trace_init(argv);
++    if (termuxadb::sendfd()) {
++        return 0;
++    }
+     return adb_commandline(argc - 1, const_cast<const char**>(argv + 1));
+ }
+diff --git a/client/mdns_disabled.cpp b/client/mdns_disabled.cpp
+new file mode 100644
+index 0000000..1b50824
+--- /dev/null
++++ b/client/mdns_disabled.cpp
+@@ -0,0 +1,49 @@
++/*
++ * Minimal mDNS stubs for Android-target TCP-only adb builds.
++ */
++
++#include "adb_mdns.h"
++
++#include <optional>
++#include <string>
++
++#include "transport.h"
++
++void init_mdns_transport_discovery() {}
++
++void mdns_cleanup() {}
++
++std::string mdns_check() {
++    return "mdns discovery unavailable in this Android build";
++}
++
++std::string mdns_list_discovered_services() {
++    return "";
++}
++
++std::optional<MdnsInfo> mdns_get_connect_service_info(const std::string&) {
++    return std::nullopt;
++}
++
++std::optional<MdnsInfo> mdns_get_pairing_service_info(const std::string&) {
++    return std::nullopt;
++}
++
++bool adb_secure_connect_by_service_name(const std::string&) {
++    return false;
++}
++
++bool using_bonjour(void) {
++    return false;
++}
++
++AdbMdnsResponderFuncs StartMdnsResponderDiscovery() {
++    return AdbMdnsResponderFuncs{
++            .mdns_check = mdns_check,
++            .mdns_list_discovered_services = mdns_list_discovered_services,
++            .mdns_get_connect_service_info = mdns_get_connect_service_info,
++            .mdns_get_pairing_service_info = mdns_get_pairing_service_info,
++            .mdns_cleanup = mdns_cleanup,
++            .adb_secure_connect_by_service_name = adb_secure_connect_by_service_name,
++    };
++}
+diff --git a/client/termux_adb.h b/client/termux_adb.h
+new file mode 100644
+index 0000000..e7ac94f
+--- /dev/null
++++ b/client/termux_adb.h
+@@ -0,0 +1,73 @@
++#pragma once
++
++#include <android-base/file.h>
++#include <dirent.h>
++#include <fcntl.h>
++#include <stdarg.h>
++#include <unistd.h>
++
++#include <string>
++
++extern "C" {
++    DIR *termuxadb_opendir(const char *name);
++    int termuxadb_closedir(DIR *dirp);
++    struct dirent *termuxadb_readdir(DIR *dirp);
++
++    int termuxadb_open(const char* path, int options);
++    int termuxadb_create(const char* path, int options, int mode);
++    int termuxadb_close(int fd);
++
++    bool termuxadb_sendfd();
++    void termuxadb_start();
++}
++
++namespace termuxadb {
++    static inline DIR *opendir(const char *name) {
++        return termuxadb_opendir(name);
++    }
++
++    static inline int closedir(DIR *dirp) {
++        return termuxadb_closedir(dirp);
++    }
++
++    static inline struct dirent *readdir(DIR *dirp) {
++        return termuxadb_readdir(dirp);
++    }
++
++    static inline int unix_open(std::string_view path, int options, ...) {
++        std::string zero_terminated(path.begin(), path.end());
++        if ((options & O_CREAT) == 0) {
++            return TEMP_FAILURE_RETRY(termuxadb_open(zero_terminated.c_str(), options));
++        } else {
++            int mode;
++            va_list args;
++            va_start(args, options);
++            mode = va_arg(args, int);
++            va_end(args);
++            return TEMP_FAILURE_RETRY(termuxadb_create(zero_terminated.c_str(), options, mode));
++        }
++    }
++
++    static inline int adb_close(int fd) {
++        return termuxadb_close(fd);
++    }
++
++    static inline bool sendfd() {
++        return termuxadb_sendfd();
++    }
++
++    static inline void start() {
++        termuxadb_start();
++    }
++
++    static inline bool ReadFileToString(const std::string& path, std::string* content, bool follow_symlinks = false) {
++        content->clear();
++
++        int flags = O_RDONLY | O_CLOEXEC | O_BINARY | (follow_symlinks ? 0 : O_NOFOLLOW);
++        android::base::unique_fd fd(TEMP_FAILURE_RETRY(termuxadb_open(path.c_str(), flags)));
++        if (fd == -1) {
++            return false;
++        }
++        return ReadFdToString(fd, content);
++    }
++}
+diff --git a/client/usb_linux.cpp b/client/usb_linux.cpp
+index 96d7a8a..008348a 100644
+--- a/client/usb_linux.cpp
++++ b/client/usb_linux.cpp
+@@ -16,6 +16,7 @@
+ 
+ #define TRACE_TAG USB
+ 
++#include "termux_adb.h"
+ #include "sysdeps.h"
+ 
+ #include "client/usb.h"
+@@ -59,7 +60,7 @@ using namespace std::literals;
+ 
+ struct usb_handle {
+     ~usb_handle() {
+-        if (fd != -1) unix_close(fd);
++        if (fd != -1) termuxadb::unix_close(fd);
+     }
+ 
+     std::string path;
+@@ -132,19 +133,19 @@ static void find_usb_device(const std::string& base,
+                             void (*register_device_callback)(const char*, const char*,
+                                                              unsigned char, unsigned char, int, int,
+                                                              unsigned, size_t)) {
+-    std::unique_ptr<DIR, int(*)(DIR*)> bus_dir(opendir(base.c_str()), closedir);
++    std::unique_ptr<DIR, int(*)(DIR*)> bus_dir(termuxadb::opendir(base.c_str()), termuxadb::closedir);
+     if (!bus_dir) return;
+ 
+     dirent* de;
+-    while ((de = readdir(bus_dir.get())) != nullptr) {
++    while ((de = termuxadb::readdir(bus_dir.get())) != nullptr) {
+         if (contains_non_digit(de->d_name)) continue;
+ 
+         std::string bus_name = base + "/" + de->d_name;
+ 
+-        std::unique_ptr<DIR, int(*)(DIR*)> dev_dir(opendir(bus_name.c_str()), closedir);
++        std::unique_ptr<DIR, int(*)(DIR*)> dev_dir(termuxadb::opendir(bus_name.c_str()), termuxadb::closedir);
+         if (!dev_dir) continue;
+ 
+-        while ((de = readdir(dev_dir.get()))) {
++        while ((de = termuxadb::readdir(dev_dir.get()))) {
+             unsigned char devdesc[4096];
+             unsigned char* bufptr = devdesc;
+             unsigned char* bufend;
+@@ -162,7 +163,7 @@ static void find_usb_device(const std::string& base,
+                 continue;
+             }
+ 
+-            int fd = unix_open(dev_name, O_RDONLY | O_CLOEXEC);
++            int fd = termuxadb::unix_open(dev_name, O_RDONLY | O_CLOEXEC);
+             if (fd == -1) {
+                 continue;
+             }
+@@ -173,7 +174,7 @@ static void find_usb_device(const std::string& base,
+                 // should have device and configuration descriptors, and atleast two endpoints
+             if (desclength < USB_DT_DEVICE_SIZE + USB_DT_CONFIG_SIZE) {
+                 D("desclength %zu is too small", desclength);
+-                unix_close(fd);
++                termuxadb::unix_close(fd);
+                 continue;
+             }
+ 
+@@ -181,7 +182,7 @@ static void find_usb_device(const std::string& base,
+             bufptr += USB_DT_DEVICE_SIZE;
+ 
+             if((device->bLength != USB_DT_DEVICE_SIZE) || (device->bDescriptorType != USB_DT_DEVICE)) {
+-                unix_close(fd);
++                termuxadb::unix_close(fd);
+                 continue;
+             }
+ 
+@@ -193,7 +194,7 @@ static void find_usb_device(const std::string& base,
+             bufptr += USB_DT_CONFIG_SIZE;
+             if (config->bLength != USB_DT_CONFIG_SIZE || config->bDescriptorType != USB_DT_CONFIG) {
+                 D("usb_config_descriptor not found");
+-                unix_close(fd);
++                termuxadb::unix_close(fd);
+                 continue;
+             }
+ 
+@@ -307,7 +308,7 @@ static void find_usb_device(const std::string& base,
+                 }
+             } // end of while
+ 
+-            unix_close(fd);
++            termuxadb::unix_close(fd);
+         }
+     }
+ }
+@@ -548,7 +549,7 @@ static void register_device(const char* dev_name, const char* dev_path, unsigned
+     std::string serial_path =
+             android::base::StringPrintf("/sys/bus/usb/devices/%s/serial", dev_path + 4);
+     std::string serial;
+-    if (!android::base::ReadFileToString(serial_path, &serial)) {
++    if (!termuxadb::ReadFileToString(serial_path, &serial)) {
+         D("[ usb read %s failed: %s ]", serial_path.c_str(), strerror(errno));
+         // We don't actually want to treat an unknown serial as an error because
+         // devices aren't able to communicate a serial number in early bringup.
+@@ -589,10 +590,10 @@ static void register_device(const char* dev_name, const char* dev_path, unsigned
+     // Initialize mark so we don't get garbage collected after the device scan.
+     usb->mark = true;
+ 
+-    usb->fd = unix_open(usb->path, O_RDWR | O_CLOEXEC);
++    usb->fd = termuxadb::unix_open(usb->path, O_RDWR | O_CLOEXEC);
+     if (usb->fd == -1) {
+         // Opening RW failed, so see if we have RO access.
+-        usb->fd = unix_open(usb->path, O_RDONLY | O_CLOEXEC);
++        usb->fd = termuxadb::unix_open(usb->path, O_RDONLY | O_CLOEXEC);
+         if (usb->fd == -1) {
+             D("[ usb open %s failed: %s]", usb->path.c_str(), strerror(errno));
+             return;
+diff --git a/client/usb_termux_stub.cpp b/client/usb_termux_stub.cpp
+new file mode 100644
+index 0000000..5588c04
+--- /dev/null
++++ b/client/usb_termux_stub.cpp
+@@ -0,0 +1,16 @@
++/*
++ * Minimal USB stubs for Android-target adb builds that only use TCP/IP transport.
++ */
++
++#include "client/usb.h"
++#include "transport.h"
++
++void usb_init() {}
++
++void usb_cleanup() {}
++
++bool is_libusb_enabled() {
++    return false;
++}
++
++void init_usb_transport(atransport*, usb_handle*) {}
+diff --git a/sysdeps.h b/sysdeps.h
+index e973e0e..fc24845 100644
+--- a/sysdeps.h
++++ b/sysdeps.h
+@@ -519,7 +519,11 @@ static inline int adb_gethostname(char* name, size_t len) {
+ }
+ 
+ static inline int adb_getlogin_r(char* buf, size_t bufsize) {
+-    return getlogin_r(buf, bufsize);
++    char* logname = getlogin();
++    if (!logname) return ENXIO;
++    if (strlen(logname) >= bufsize) return ERANGE;
++    strcpy(buf, logname);
++    return 0;
+ }
+ 
+ static inline int adb_read(borrowed_fd fd, void* buf, size_t len) {

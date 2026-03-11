@@ -1,0 +1,29 @@
+diff --git a/libcutils/native_handle.cpp b/libcutils/native_handle.cpp
+index b85c93b..35a840e 100644
+--- a/libcutils/native_handle.cpp
++++ b/libcutils/native_handle.cpp
+@@ -23,13 +23,13 @@
+ #include <unistd.h>
+ 
+ // Needs to come after stdlib includes to capture the __BIONIC__ definition
+-#ifdef __BIONIC__
++#if defined(__BIONIC__) && __ANDROID_API__ >= 29
+ #include <android/fdsan.h>
+ #endif
+ 
+ namespace {
+ 
+-#if !defined(__BIONIC__)
++#if !defined(__BIONIC__) || __ANDROID_API__ < 29
+ // fdsan stubs when not linked against bionic
+ #define ANDROID_FDSAN_OWNER_TYPE_NATIVE_HANDLE 0
+ 
+@@ -43,7 +43,7 @@ int android_fdsan_close_with_tag(int fd, uint64_t /*tag*/) {
+     return close(fd);
+ }
+ void android_fdsan_exchange_owner_tag(int /*fd*/, uint64_t /*expected_tag*/, uint64_t /*tag*/) {}
+-#endif  // !__BIONIC__
++#endif  // !__BIONIC__ || __ANDROID_API__ < 29
+ 
+ uint64_t get_fdsan_tag(const native_handle_t* handle) {
+     return android_fdsan_create_owner_tag(ANDROID_FDSAN_OWNER_TYPE_NATIVE_HANDLE,

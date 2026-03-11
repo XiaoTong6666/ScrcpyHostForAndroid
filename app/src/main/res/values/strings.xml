@@ -1,0 +1,83 @@
+<resources>
+    <string name="app_name">Scrcpy Host</string>
+    <string name="description">先通过网络 ADB 找到目标设备，再把会话切进远程控制页。</string>
+    <string name="adb_entry">网络 ADB 入口</string>
+    <string name="device_ip">设备 IP</string>
+    <string name="adb_port">ADB 端口</string>
+    <string name="adb_backend_address">ADB 后端地址</string>
+    <string name="localhost">本地</string>
+    <string name="current_status">当前状态</string>
+    <string name="waiting_for_connection">等待连接</string>
+    <string name="connecting">连接中...</string>
+    <string name="connect_and_enter_remote">连接并进入远程页</string>
+    <string name="connection_failed">连接失败</string>
+    <string name="invalid_ip_port">请输入有效的 IP 和端口。</string>
+    <string name="enter_backend_address">请输入后端地址。</string>
+    <string name="requesting_adb_connect">正在请求后端执行 adb connect %1$s:%2$d</string>
+    <string name="adb_connected_opening_sdl">ADB 已连接，正在打开 SDL 远程页</string>
+    <string name="scrcpy_remote_title">scrcpy Remote · %1$s</string>
+    <string name="requesting_scrcpy_session">正在向后端请求 scrcpy 视频会话（%1$s）</string>
+    <string name="control_fallback">控制通道分支启动失败，切换到视频回退模式</string>
+    <string name="session_start_failed">会话启动失败</string>
+    <string name="invalid_backend_address">后端地址无效</string>
+    <string name="scrcpy_server_started">scrcpy-server 已启动，正在连接视频流</string>
+    <string name="session_connection_failed">会话连接失败</string>
+    <string name="video_surface_unavailable">视频输出面不可用</string>
+    <string name="cannot_create_video_surface">无法创建视频渲染 Surface</string>
+    <string name="control_channel_error_mode">控制通道异常（%1$s）</string>
+    <string name="control_channel_error_msg">控制通道异常：%1$s</string>
+    <string name="control_channel_error">控制通道异常</string>
+    <string name="cannot_connect_control_channel">无法连接 scrcpy 控制通道</string>
+    <string name="video_stream_decoded">视频流已解码</string>
+    <string name="video_stream_error_mode">视频流异常（%1$s）</string>
+    <string name="video_stream_error_msg">视频流异常：%1$s</string>
+    <string name="video_channel_connected_mode">视频通道已连接（%1$s）</string>
+    <string name="invalid_scrcpy_port">无效的 scrcpy 转发端口: %1$d</string>
+    <string name="cannot_establish_socket">无法建立 scrcpy 会话 socket</string>
+    <string name="control_rework_failed">控制重构分支失败，切换视频回退模式</string>
+    <string name="info_button">信息</string>
+    <string name="sdl_remote_page">SDL 远程页</string>
+    <string name="waiting_for_scrcpy_session">正在等待 scrcpy 会话</string>
+    <string name="current_backend">当前后端</string>
+    <string name="video_channel">视频通道</string>
+    <string name="not_established">尚未建立</string>
+    <string name="return_to_connect_page">返回连接页</string>
+    <string name="hide_button">隐藏</string>
+
+    <!-- Scrcpy Control Client -->
+    <string name="control_channel_connected">控制通道已连接</string>
+    <string name="control_channel_write_failed">scrcpy 控制通道写入失败</string>
+
+    <!-- Backend Bridge Client -->
+    <string name="backend_no_status_returned">后端未返回状态信息</string>
+    <string name="backend_no_session_returned">后端未返回 scrcpy 会话信息</string>
+    <string name="backend_no_stop_result_returned">后端未返回停止结果</string>
+    <string name="cannot_connect_adb_backend">无法连接到 ADB 后端</string>
+
+    <!-- Scrcpy Video Stream Client -->
+    <string name="connecting_video_stream">正在连接 scrcpy 视频流 %1$s:%2$d</string>
+    <string name="video_stream_connected_init_decoder">视频流已连接，正在初始化 %1$s 解码器</string>
+    <string name="video_stream_ended">视频流已结束</string>
+    <string name="video_stream_closed">视频流已关闭</string>
+    <string name="decode_output_ready">解码输出已就绪 %1$dx%2$d</string>
+    <string name="video_stream_error_exit">scrcpy 视频流异常退出</string>
+
+    <!-- Local Adb Bridge -->
+    <string name="local_adb_connection_failed">内置 ADB 连接失败</string>
+    <string name="start_local_scrcpy_session_failed">启动本地 scrcpy 会话失败</string>
+    <string name="stop_local_scrcpy_session_failed">停止本地 scrcpy 会话失败</string>
+    <!-- Performance Stats Overlay -->
+    <string name="stats_endpoint_label">终端: %1$s</string>
+    <string name="stats_backend_label">后端: %1$s</string>
+    <string name="stats_status_label">状态: %1$s</string>
+    <string name="stats_video_label">视频: %1$s</string>
+    <string name="stats_waiting_video">等待视频流...</string>
+    <string name="stats_decoder_label">解码器: %1$s (%2$s)</string>
+    <string name="stats_incoming_bitrate_label">接收比特率: %1$.2f Mbps</string>
+    <string name="stats_decode_time_label">解码偏差: %1$.2f ms</string>
+    <string name="stats_received_frames_label">接收帧数: %1$d</string>
+    <string name="stats_rendered_frames_label">渲染帧数: %1$d</string>
+    <string name="stats_dropped_frames_label">丢帧总数: %1$d</string>
+    <string name="stats_jitter_label">抖动: %1$.2f ms</string>
+    <string name="stats_resolution_fps">%1$dx%2$d  %3$.0f FPS</string>
+</resources>

@@ -1,0 +1,36 @@
+[submodule "SDL"]
+	path = SDL
+	url = https://github.com/libsdl-org/SDL/
+	shallow = true
+[submodule "android-tools"]
+	path = android-tools
+	url = https://github.com/XiaoTong6666/android-tools
+	shallow = true
+[submodule "scrcpy"]
+	path = scrcpy
+	url = https://github.com/Genymobile/scrcpy
+	shallow = true
+[submodule "android-deps/abseil-cpp"]
+	path = android-deps/abseil-cpp
+	url = https://github.com/abseil/abseil-cpp
+	shallow = true
+[submodule "android-deps/brotli"]
+	path = android-deps/brotli
+	url = https://github.com/google/brotli
+	shallow = true
+[submodule "android-deps/lz4"]
+	path = android-deps/lz4
+	url = https://github.com/lz4/lz4
+	shallow = true
+[submodule "android-deps/pcre2"]
+	path = android-deps/pcre2
+	url = https://github.com/PCRE2Project/pcre2
+	shallow = true
+[submodule "android-deps/protobuf"]
+	path = android-deps/protobuf
+	url = https://github.com/protocolbuffers/protobuf
+	shallow = true
+[submodule "android-deps/zstd"]
+	path = android-deps/zstd
+	url = https://github.com/facebook/zstd
+	shallow = true
