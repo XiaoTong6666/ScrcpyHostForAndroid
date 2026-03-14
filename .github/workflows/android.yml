@@ -1,0 +1,170 @@
+name: Android CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  ANDROID_NDK_VERSION: 27.2.12479018
+  APK_BASENAME: ScrcpyHostForAndroid
+  NIGHTLY_TAG: nightly
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: "21"
+          distribution: "temurin"
+          cache: gradle
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android NDK
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          yes | sdkmanager --install "ndk;${ANDROID_NDK_VERSION}"
+
+      - name: Restore or create debug keystore
+        env:
+          ANDROID_DEBUG_KEYSTORE: ${{ secrets.ANDROID_DEBUG_KEYSTORE }}
+        run: |
+          mkdir -p ~/.android
+          if [ -n "${ANDROID_DEBUG_KEYSTORE}" ]; then
+            echo "${ANDROID_DEBUG_KEYSTORE}" | base64 --decode > ~/.android/debug.keystore
+            echo "Debug keystore restored from secret."
+          else
+            keytool -genkeypair \
+              -v \
+              -storetype PKCS12 \
+              -keystore ~/.android/debug.keystore \
+              -storepass android \
+              -alias androiddebugkey \
+              -keypass android \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+            echo "Debug keystore generated locally for CI."
+          fi
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Build APKs
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: ./gradlew clean downloadNightlyAdb :app:assembleDebug :app:assembleRelease
+
+      - name: Rename APKs
+        run: |
+          find app/build/outputs/apk -type f -name "*.apk" | while read -r file; do
+            dir=$(dirname "${file}")
+            filename=$(basename "${file}")
+
+            if [[ "${filename}" == *"debug"* ]]; then
+              new_name="${APK_BASENAME}_D_nightly.apk"
+            else
+              new_name="${APK_BASENAME}_nightly.apk"
+            fi
+
+            mv "${file}" "${dir}/${new_name}"
+            echo "${filename} -> ${new_name}"
+          done
+
+      - name: Assemble release payload
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          mkdir -p dist
+          cp "app/build/outputs/apk/debug/${APK_BASENAME}_D_nightly.apk" "dist/${APK_BASENAME}_D_nightly.apk"
+          cp "app/build/outputs/apk/release/${APK_BASENAME}_nightly.apk" "dist/${APK_BASENAME}_nightly.apk"
+
+          (
+            cd dist
+            sha256sum "${APK_BASENAME}_D_nightly.apk" "${APK_BASENAME}_nightly.apk" > SHA256SUMS
+          )
+
+          cat > dist/nightly.json <<EOF
+          {
+            "tag": "${NIGHTLY_TAG}",
+            "repository": "${{ github.repository }}",
+            "commit": "${{ github.sha }}",
+            "ref_name": "${{ github.ref_name }}",
+            "workflow": "${{ github.workflow }}",
+            "run_id": "${{ github.run_id }}",
+            "run_number": "${{ github.run_number }}",
+            "run_attempt": "${{ github.run_attempt }}",
+            "created_at_utc": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "run_url": "${RUN_URL}",
+            "assets": {
+              "debug": "${APK_BASENAME}_D_nightly.apk",
+              "release": "${APK_BASENAME}_nightly.apk",
+              "sha256": "SHA256SUMS"
+            }
+          }
+          EOF
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug
+          path: dist/${{ env.APK_BASENAME }}_D_nightly.apk
+          if-no-files-found: error
+
+      - name: Upload release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-release
+          path: dist/${{ env.APK_BASENAME }}_nightly.apk
+          if-no-files-found: error
+
+      - name: Upload nightly metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-nightly-metadata
+          path: |
+            dist/SHA256SUMS
+            dist/nightly.json
+          if-no-files-found: error
+
+      - name: Move nightly tag
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -f "${NIGHTLY_TAG}" "${GITHUB_SHA}"
+          git push origin "refs/tags/${NIGHTLY_TAG}" --force
+
+      - name: Recreate nightly prerelease
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "${NIGHTLY_TAG}" >/dev/null 2>&1 && gh release delete "${NIGHTLY_TAG}" --yes || true
+          gh release create "${NIGHTLY_TAG}" \
+            "dist/${APK_BASENAME}_D_nightly.apk" \
+            "dist/${APK_BASENAME}_nightly.apk" \
+            dist/SHA256SUMS \
+            dist/nightly.json \
+            --title "${NIGHTLY_TAG}" \
+            --notes "Automated nightly APK build for ${GITHUB_SHA}" \
+            --prerelease

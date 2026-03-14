@@ -1,4 +1,9 @@
 import com.diffplug.spotless.LineEnding
+import groovy.json.JsonSlurper
+import java.io.File
+import java.net.HttpURLConnection
+import java.net.URI
+import java.security.MessageDigest
 
 // Top-level build file where you can add configuration options common to all sub-projects/modules.
 plugins {
@@ -7,59 +12,194 @@ plugins {
     id("com.diffplug.spotless") version "8.2.1"
 }
 
-val hostAdbBinaryName =
-    if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) "adb.exe" else "adb"
-val androidToolsBuildDir = layout.buildDirectory.dir("android-tools-host-nopatch")
-val termuxAdbOutputDir = layout.buildDirectory.dir("outputs/termux-adb")
 val hostToolsOutputDir = layout.buildDirectory.dir("outputs/host-tools")
-val stagedTermuxAdbDir = hostToolsOutputDir.map { it.dir("termux-adb") }
-val stagedHostAdb = hostToolsOutputDir.map { it.file("adb/$hostAdbBinaryName") }
 val stagedScrcpyServer = hostToolsOutputDir.map { it.file("scrcpy/scrcpy-server") }
 val scrcpyServerReleaseApkDir = layout.projectDirectory.dir("scrcpy/server/build/outputs/apk/release")
+val nightlyAdbRepo = providers.gradleProperty("androidToolsNightlyRepo").orElse("XiaoTong6666/android-tools")
+val nightlyAdbTag = providers.gradleProperty("androidToolsNightlyTag").orElse("nightly")
 
-val configureHostAdb by tasks.registering(Exec::class) {
-    group = "build"
-    description = "Configures the standalone android-tools host build for adb."
+data class NightlyAdbAsset(
+    val abi: String,
+    val assetName: String,
+)
 
-    inputs.dir(layout.projectDirectory.dir("android-tools"))
-    outputs.file(androidToolsBuildDir.map { it.file("CMakeCache.txt") })
-
-    commandLine(
-        "cmake",
-        "-S",
-        "android-tools",
-        "-B",
-        androidToolsBuildDir.get().asFile.absolutePath,
-        "-DANDROID_TOOLS_PATCH_VENDOR=OFF",
-        "-DANDROID_TOOLS_USE_BUNDLED_FMT=ON",
+val nightlyAdbAssets =
+    listOf(
+        NightlyAdbAsset(abi = "arm64-v8a", assetName = "adb-arm64-v8a"),
+        NightlyAdbAsset(abi = "armeabi-v7a", assetName = "adb-armeabi-v7a"),
     )
+
+fun readHttpBody(connection: HttpURLConnection): String =
+    (connection.errorStream ?: connection.inputStream).bufferedReader().use { it.readText() }
+
+fun openHttpConnection(
+    url: String,
+    token: String?,
+    accept: String,
+): HttpURLConnection =
+    (URI(url).toURL().openConnection() as HttpURLConnection).apply {
+        instanceFollowRedirects = true
+        connectTimeout = 30_000
+        readTimeout = 120_000
+        requestMethod = "GET"
+        setRequestProperty("Accept", accept)
+        setRequestProperty("User-Agent", "scrcpyandroid2-gradle")
+        if (!token.isNullOrBlank()) {
+            setRequestProperty("Authorization", "Bearer $token")
+        }
+    }
+
+fun httpGetText(
+    url: String,
+    token: String?,
+    accept: String = "application/vnd.github+json",
+): String {
+    val connection = openHttpConnection(url, token, accept)
+    try {
+        val body = readHttpBody(connection)
+        if (connection.responseCode !in 200..299) {
+            error("HTTP ${connection.responseCode} when fetching $url\n$body")
+        }
+        return body
+    } finally {
+        connection.disconnect()
+    }
 }
 
-val buildHostAdb by tasks.registering(Exec::class) {
-    group = "build"
-    description = "Builds the upstream host adb binary through android-tools."
-    dependsOn(configureHostAdb)
-
-    inputs.dir(layout.projectDirectory.dir("android-tools"))
-    outputs.file(androidToolsBuildDir.map { it.file("vendor/$hostAdbBinaryName") })
-
-    commandLine(
-        "cmake",
-        "--build",
-        androidToolsBuildDir.get().asFile.absolutePath,
-        "--target",
-        "adb",
-        "-j4",
-    )
+fun downloadToFile(
+    url: String,
+    destination: File,
+    token: String?,
+    accept: String = "application/octet-stream",
+) {
+    destination.parentFile.mkdirs()
+    val connection = openHttpConnection(url, token, accept)
+    try {
+        if (connection.responseCode !in 200..299) {
+            val body = readHttpBody(connection)
+            error("HTTP ${connection.responseCode} when downloading $url\n$body")
+        }
+        connection.inputStream.use { input ->
+            destination.outputStream().use { output ->
+                input.copyTo(output)
+            }
+        }
+    } finally {
+        connection.disconnect()
+    }
 }
 
-val stageHostAdb by tasks.registering(Sync::class) {
-    group = "build"
-    description = "Copies the built host adb binary into a stable Gradle output location."
-    dependsOn(buildHostAdb)
+fun sha256Hex(file: File): String {
+    val digest = MessageDigest.getInstance("SHA-256")
+    file.inputStream().use { input ->
+        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+        while (true) {
+            val bytesRead = input.read(buffer)
+            if (bytesRead < 0) {
+                break
+            }
+            digest.update(buffer, 0, bytesRead)
+        }
+    }
+    return digest.digest().joinToString(separator = "") { byte -> "%02x".format(byte) }
+}
 
-    from(androidToolsBuildDir.map { it.file("vendor/$hostAdbBinaryName") })
-    into(hostToolsOutputDir.map { it.dir("adb") })
+val downloadNightlyAdb by tasks.registering {
+    group = "build"
+    description = "Downloads the nightly Android adb binaries from the android-tools GitHub release and verifies SHA-256."
+
+    val outputFiles =
+        nightlyAdbAssets.map { nightlyAsset ->
+            layout.projectDirectory.file("android-tools/out/termux-adb/${nightlyAsset.abi}/adb").asFile
+        }
+    val checksumOutput = layout.projectDirectory.file("android-tools/out/termux-adb/SHA256SUMS").asFile
+    val metadataOutput = layout.projectDirectory.file("android-tools/out/termux-adb/nightly.json").asFile
+
+    outputs.files(outputFiles + listOf(checksumOutput, metadataOutput))
+    outputs.upToDateWhen { false }
+
+    doLast {
+        val repo = nightlyAdbRepo.get()
+        val tag = nightlyAdbTag.get()
+        val githubToken =
+            providers.environmentVariable("ANDROID_TOOLS_GITHUB_TOKEN").orNull
+                ?: providers.environmentVariable("GITHUB_TOKEN").orNull
+        val releaseApiUrl = "https://api.github.com/repos/$repo/releases/tags/$tag"
+        val tempDir = layout.buildDirectory.dir("downloads/android-tools-nightly").get().asFile
+
+        tempDir.deleteRecursively()
+        tempDir.mkdirs()
+
+        val releaseJsonText = httpGetText(releaseApiUrl, githubToken)
+        val releaseJson = JsonSlurper().parseText(releaseJsonText) as Map<*, *>
+        val releaseAssets = (releaseJson["assets"] as? List<*>)?.filterIsInstance<Map<*, *>>().orEmpty()
+        val assetsByName =
+            releaseAssets.associateBy { asset ->
+                asset["name"]?.toString() ?: error("Encountered a nightly release asset without a name.")
+            }
+
+        val checksumAsset =
+            assetsByName["SHA256SUMS"]
+                ?: error("Nightly release $repo@$tag does not contain a SHA256SUMS asset.")
+        val metadataAsset =
+            assetsByName["nightly.json"]
+                ?: error("Nightly release $repo@$tag does not contain a nightly.json asset.")
+
+        val checksumTemp = File(tempDir, "SHA256SUMS")
+        val metadataTemp = File(tempDir, "nightly.json")
+        downloadToFile(checksumAsset["browser_download_url"].toString(), checksumTemp, githubToken, "*/*")
+        downloadToFile(metadataAsset["browser_download_url"].toString(), metadataTemp, githubToken, "*/*")
+
+        val expectedChecksums =
+            checksumTemp
+                .readLines()
+                .mapNotNull { line ->
+                    val trimmed = line.trim()
+                    if (trimmed.isEmpty()) {
+                        null
+                    } else {
+                        val parts = trimmed.split(Regex("\\s+"), limit = 2)
+                        if (parts.size != 2) {
+                            error("Malformed SHA256SUMS line: $line")
+                        }
+                        parts[1].removePrefix("*") to parts[0].lowercase()
+                    }
+                }.toMap()
+
+        nightlyAdbAssets.forEach { nightlyAsset ->
+            val releaseAsset =
+                assetsByName[nightlyAsset.assetName]
+                    ?: error("Nightly release $repo@$tag is missing ${nightlyAsset.assetName}.")
+            val expectedSha =
+                expectedChecksums[nightlyAsset.assetName]
+                    ?: error("SHA256SUMS does not contain ${nightlyAsset.assetName}.")
+            val downloadedAsset = File(tempDir, nightlyAsset.assetName)
+            val outputFile =
+                layout.projectDirectory.file("android-tools/out/termux-adb/${nightlyAsset.abi}/adb").asFile
+
+            downloadToFile(releaseAsset["browser_download_url"].toString(), downloadedAsset, githubToken, "*/*")
+
+            val actualSha = sha256Hex(downloadedAsset)
+            if (actualSha != expectedSha) {
+                error(
+                    "SHA-256 mismatch for ${nightlyAsset.assetName}: expected $expectedSha, got $actualSha",
+                )
+            }
+
+            outputFile.parentFile.mkdirs()
+            downloadedAsset.copyTo(outputFile, overwrite = true)
+            outputFile.setExecutable(true)
+        }
+
+        checksumOutput.parentFile.mkdirs()
+        checksumTemp.copyTo(checksumOutput, overwrite = true)
+        metadataTemp.copyTo(metadataOutput, overwrite = true)
+
+        println(
+            "Downloaded android-tools nightly release ${releaseJson["name"] ?: tag} " +
+                "(published ${releaseJson["published_at"] ?: "unknown"})",
+        )
+    }
 }
 
 val stageScrcpyServerBinary by tasks.registering(Sync::class) {
@@ -72,153 +212,6 @@ val stageScrcpyServerBinary by tasks.registering(Sync::class) {
         rename { "scrcpy-server" }
     }
     into(hostToolsOutputDir.map { it.dir("scrcpy") })
-}
-
-tasks.register("assembleHostAdb") {
-    group = "build"
-    description = "Builds and stages the standalone host adb binary."
-    dependsOn(stageHostAdb)
-}
-
-tasks.register("assembleHostRuntimeDebug") {
-    group = "build"
-    description = "Builds and stages host adb together with scrcpy-server."
-    dependsOn(stageHostAdb, stageScrcpyServerBinary)
-}
-
-data class TermuxAbi(
-    val abi: String,
-)
-
-val termuxAbis =
-    listOf(
-        TermuxAbi(
-            abi = "arm64-v8a",
-        ),
-        TermuxAbi(
-            abi = "armeabi-v7a",
-        ),
-    )
-
-termuxAbis.forEach { termuxAbi ->
-    val taskSuffix =
-        termuxAbi.abi
-            .split('-', '_')
-            .joinToString(separator = "") { part -> part.replaceFirstChar(Char::uppercaseChar) }
-
-    tasks.register<Exec>("buildTermuxAdb$taskSuffix") {
-        group = "build"
-        description =
-            "Builds the Termux-patched Android adb binary for ${termuxAbi.abi} using the local NDK."
-
-        val buildScript = layout.projectDirectory.file("scripts/build_termux_adb.sh")
-        inputs.file(buildScript)
-        inputs.dir(layout.projectDirectory.dir("android-tools"))
-        outputs.file(termuxAdbOutputDir.map { it.file("${termuxAbi.abi}/adb") })
-        workingDir = layout.projectDirectory.asFile
-
-        doFirst {
-            commandLine(buildScript.asFile.absolutePath, termuxAbi.abi)
-        }
-    }
-}
-
-tasks.register("assembleTermuxAdb") {
-    group = "build"
-    description = "Builds the Termux-patched Android adb binary for all configured Android ABIs."
-    dependsOn(
-        termuxAbis.map { termuxAbi ->
-            val taskSuffix =
-                termuxAbi.abi
-                    .split('-', '_')
-                    .joinToString(separator = "") { part -> part.replaceFirstChar(Char::uppercaseChar) }
-            "buildTermuxAdb$taskSuffix"
-        },
-    )
-}
-
-val stageTermuxAdb by tasks.registering(Sync::class) {
-    group = "build"
-    description = "Stages Termux-patched Android adb binaries into a stable Gradle output location."
-    dependsOn("assembleTermuxAdb")
-
-    from(termuxAdbOutputDir)
-    into(stagedTermuxAdbDir)
-}
-
-tasks.register("assembleBackendRuntime") {
-    group = "build"
-    description = "Builds and stages host bridge runtime plus embedded Termux adb binaries."
-    dependsOn(stageHostAdb, stageScrcpyServerBinary, stageTermuxAdb)
-}
-
-tasks.register<Exec>("launchRemoteScrcpyServer") {
-    group = "application"
-    description =
-        "Uses the staged host adb to connect to a network device, push scrcpy-server, and launch it. Pass -Ptarget=HOST[:PORT]."
-    dependsOn("assembleHostRuntimeDebug")
-
-    val launcherScript = layout.projectDirectory.file("scripts/run_remote_scrcpy_server.sh")
-    inputs.file(launcherScript)
-    workingDir = layout.projectDirectory.asFile
-
-    doFirst {
-        val target =
-            project.findProperty("target")?.toString()?.takeIf { it.isNotBlank() }
-                ?: error("Missing -Ptarget=HOST[:PORT] for launchRemoteScrcpyServer")
-
-        val args = mutableListOf(launcherScript.asFile.absolutePath, target)
-        project.findProperty("localPort")?.toString()?.takeIf { it.isNotBlank() }?.let {
-            args += listOf("--local-port", it)
-        }
-
-        commandLine(args)
-    }
-}
-
-tasks.register<Exec>("connectRemoteAdb") {
-    group = "application"
-    description =
-        "Uses the staged host adb to run adb connect HOST[:PORT]. Pass -Ptarget=HOST[:PORT]."
-    dependsOn("assembleHostAdb")
-
-    val connectScript = layout.projectDirectory.file("scripts/connect_remote_adb.sh")
-    inputs.file(connectScript)
-    workingDir = layout.projectDirectory.asFile
-
-    doFirst {
-        val target =
-            project.findProperty("target")?.toString()?.takeIf { it.isNotBlank() }
-                ?: error("Missing -Ptarget=HOST[:PORT] for connectRemoteAdb")
-
-        commandLine(connectScript.asFile.absolutePath, target)
-    }
-}
-
-tasks.register<Exec>("runAdbBridge") {
-    group = "application"
-    description =
-        "Starts a local HTTP bridge so the Android app can trigger adb connect. Optional: -PbridgeHost=0.0.0.0 -PbridgePort=8765"
-    dependsOn("assembleHostRuntimeDebug")
-
-    val bridgeScript = layout.projectDirectory.file("scripts/adb_bridge_server.py")
-    inputs.file(bridgeScript)
-    workingDir = layout.projectDirectory.asFile
-
-    doFirst {
-        val bridgeHost = project.findProperty("bridgeHost")?.toString()?.ifBlank { "0.0.0.0" } ?: "0.0.0.0"
-        val bridgePort = project.findProperty("bridgePort")?.toString()?.ifBlank { "8765" } ?: "8765"
-        commandLine(
-            "python3",
-            bridgeScript.asFile.absolutePath,
-            "--host",
-            bridgeHost,
-            "--port",
-            bridgePort,
-        )
-        environment("ADB_BRIDGE_ADB_BIN", stagedHostAdb.get().asFile.absolutePath)
-        environment("ADB_BRIDGE_SCRCPY_SERVER_BIN", stagedScrcpyServer.get().asFile.absolutePath)
-    }
 }
 
 spotless {

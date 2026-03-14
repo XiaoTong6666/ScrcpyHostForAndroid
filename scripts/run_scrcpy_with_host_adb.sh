@@ -25,12 +25,12 @@ case "$1" in
 esac
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ADB_BIN="$ROOT_DIR/build/outputs/host-tools/adb/adb"
+ADB_BIN="$ROOT_DIR/android-tools/out/host/adb/adb"
 SCRCPY_BIN="${SCRCPY_BIN:-scrcpy}"
 
 if [[ ! -x "$ADB_BIN" ]]; then
     echo "Missing host adb at $ADB_BIN" >&2
-    echo "Run ./gradlew assembleHostAdb first." >&2
+    echo "Run ./android-tools/scripts/build-host-adb.sh first." >&2
     exit 1
 fi
 

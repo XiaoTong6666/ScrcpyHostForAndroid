@@ -84,8 +84,9 @@ ADB 后端地址: local://bridge
 ```bash
 git clone --recurse-submodules https://github.com/XiaoTong6666/ScrcpyHostForAndroid.git
 cd ScrcpyHostForAndroid
-./gradlew assembleHostRuntimeDebug
-./gradlew runAdbBridge -PbridgeHost=0.0.0.0 -PbridgePort=8765
+./android-tools/scripts/build-host-adb.sh
+./gradlew stageScrcpyServerBinary
+python3 scripts/adb_bridge_server.py --host 0.0.0.0 --port 8765
 ```
 
 然后在 Android 客户端中填写：
@@ -103,25 +104,29 @@ ADB 后端地址: http://192.168.1.20:8765
 仅构建桌面侧 `adb`：
 
 ```bash
-./gradlew assembleHostAdb
+./android-tools/scripts/build-host-adb.sh
 ```
 
 连接远程 ADB 设备：
 
 ```bash
-./gradlew connectRemoteAdb -Ptarget=192.168.1.88:5555
+./android-tools/scripts/build-host-adb.sh
+./scripts/connect_remote_adb.sh 192.168.1.88:5555
 ```
 
 手动推送并启动远程 `scrcpy-server`：
 
 ```bash
-./gradlew launchRemoteScrcpyServer -Ptarget=192.168.1.88:5555
+./android-tools/scripts/build-host-adb.sh
+./gradlew stageScrcpyServerBinary
+./scripts/run_remote_scrcpy_server.sh 192.168.1.88:5555
 ```
 
 构建可安装 APK：
 
 ```bash
 git submodule update --init --recursive
+./gradlew downloadNightlyAdb
 ./gradlew assembleRelease
 ```
 
@@ -136,13 +141,39 @@ git submodule update --init --recursive
 - Rust / Cargo
 - Git 子模块
 
-项目在构建 APK 时会自动做几件事：
+项目把 `adb` 的实际编译完全放在 `android-tools/` 子仓库里，主仓库不再触发 `adb ELF` 构建。
 
-- 编译适配 Android 的 `adb`
+构建 APK 前，推荐先直接拉取 `android-tools` 的 `nightly` release：
+
+```bash
+./gradlew downloadNightlyAdb
+```
+
+这个任务会做三件事：
+
+- 从 `XiaoTong6666/android-tools` 的 `nightly` tag 对应 release 下载 `adb-arm64-v8a` 和 `adb-armeabi-v7a`
+- 下载同一份 release 里的 `SHA256SUMS` 和 `nightly.json`
+- 校验 SHA-256 后再写入 `android-tools/out/termux-adb/<abi>/adb`
+
+如果你不想走 release，也可以继续手动本地编译：
+
+```bash
+./android-tools/scripts/build-termux-adb.sh arm64-v8a
+./android-tools/scripts/build-termux-adb.sh armeabi-v7a
+```
+
+然后主仓库构建只会做几件事：
+
 - 打包 `scrcpy-server`
-- 将运行时文件放入 APK assets
+- 将 `android-tools/out/termux-adb` 下已有的 `adb` 二进制放入 APK assets
 
-如果缺少子模块或 NDK/CMake/Rust 环境，构建会失败。
+其中 `adb` 的构建职责都在 `android-tools/` 内部：
+
+- `android-tools/scripts/build-host-adb.sh` 负责桌面侧 `adb`
+- `android-tools/scripts/build-termux-adb.sh ABI` 负责 Android/Termux `adb`
+- 主仓库只消费这些预编译产物，不再直接编排 `adb` 的 CMake/补丁细节，也不会自动调用这些脚本
+
+如果缺少预编译 `adb`、子模块或 NDK/CMake/Rust 环境，构建会失败。
 
 ## 上游开源项目分析
 
@@ -151,11 +182,7 @@ git submodule update --init --recursive
 - `scrcpy` 顶层协议是 `Apache-2.0`，它是这个项目最核心的上游之一。
 - `android-tools` 顶层协议也是 `Apache-2.0`，当前工程主要用它来构建 `adb`。
 - `SDL` 使用 `zlib` 协议。
-- `abseil-cpp` 使用 `Apache-2.0`。
-- `brotli` 使用 `MIT`。
-- `protobuf` 和 `zstd` 使用 `BSD-3-Clause`。
-- `pcre2` 使用 `BSD-3-Clause WITH PCRE2-exception`。
-- `lz4` 仓库是混合许可，但它的 `lib/` 部分是 `BSD-2-Clause`，而当前工程使用的是库部分而不是其 GPL 工具链部分。
+- `android-tools` 的依赖链里还会用到 `abseil-cpp`、`brotli`、`lz4`、`pcre2`、`protobuf`、`zstd` 等宽松许可组件，但它们已经不再作为主仓库子模块存在。
 
 基于这些上游组成，当前仓库没有明显必须整体切换到强 copyleft 协议的信号。为了和核心上游保持一致，也为了把专利授权和再分发条款写清楚，这个项目适合使用 `Apache License 2.0` 作为顶层协议。
 
@@ -179,7 +206,6 @@ git submodule update --init --recursive
 - `scrcpy/`
 - `android-tools/`
 - `SDL/`
-- `android-deps/`
 
 ## 代码参考
 
@@ -188,11 +214,7 @@ git submodule update --init --recursive
 - `scrcpy`：<https://github.com/Genymobile/scrcpy>
 - `android-tools`：<https://github.com/XiaoTong6666/android-tools>
 - `SDL`：<https://github.com/libsdl-org/SDL/>
-- `abseil-cpp`：<https://github.com/abseil/abseil-cpp>
-- `brotli`：<https://github.com/google/brotli>
-- `lz4`：<https://github.com/lz4/lz4>
-- `pcre2`：<https://github.com/PCRE2Project/pcre2>
-- `protobuf`：<https://github.com/protocolbuffers/protobuf>
-- `zstd`：<https://github.com/facebook/zstd>
+
+`android-tools` 内部仍会继续消费这些上游项目，但它们现在属于 `android-tools` 的构建依赖，不再作为主仓库一级子模块存在。
 
 另外，仓库中的 `patches/` 目录包含了针对 `scrcpy` 和 `android-tools` 的本地补丁，用于适配当前工程的 Android 构建和运行方式。

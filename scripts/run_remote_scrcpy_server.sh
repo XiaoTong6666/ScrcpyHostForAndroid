@@ -25,20 +25,20 @@ case "$1" in
 esac
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ADB_BIN="$ROOT_DIR/build/outputs/host-tools/adb/adb"
+ADB_BIN="$ROOT_DIR/android-tools/out/host/adb/adb"
 SCRCPY_SERVER_BIN="$ROOT_DIR/build/outputs/host-tools/scrcpy/scrcpy-server"
 SCRCPY_SERVER_DEST="/data/local/tmp/scrcpy-server.jar"
 SCRCPY_LOCAL_PORT=27183
 
 if [[ ! -x "$ADB_BIN" ]]; then
     echo "Missing host adb at $ADB_BIN" >&2
-    echo "Run ./gradlew assembleHostRuntimeDebug first." >&2
+    echo "Run ./android-tools/scripts/build-host-adb.sh first." >&2
     exit 1
 fi
 
 if [[ ! -f "$SCRCPY_SERVER_BIN" ]]; then
     echo "Missing scrcpy-server at $SCRCPY_SERVER_BIN" >&2
-    echo "Run ./gradlew assembleHostRuntimeDebug first." >&2
+    echo "Run ./gradlew stageScrcpyServerBinary first." >&2
     exit 1
 fi
 

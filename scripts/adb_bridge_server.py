@@ -19,7 +19,7 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 ADB_BIN = Path(
     os.environ.get(
         "ADB_BRIDGE_ADB_BIN",
-        str(ROOT_DIR / "build" / "outputs" / "host-tools" / "adb" / "adb"),
+        str(ROOT_DIR / "android-tools" / "out" / "host" / "adb" / "adb"),
     )
 ).resolve()
 SCRCPY_SERVER_BIN = Path(
@@ -68,7 +68,7 @@ def run_adb(*args: str) -> tuple[int, str]:
 
 def ensure_runtime_tools() -> None:
     if not ADB_BIN.is_file():
-        raise FileNotFoundError(f"Missing staged adb binary at {ADB_BIN}")
+        raise FileNotFoundError(f"Missing host adb binary at {ADB_BIN}")
     if not SCRCPY_SERVER_BIN.is_file():
         raise FileNotFoundError(f"Missing staged scrcpy-server at {SCRCPY_SERVER_BIN}")
 
