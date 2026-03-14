@@ -40,12 +40,24 @@ jobs:
         with:
           java-version: "21"
           distribution: "temurin"
-          cache: gradle
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          validate-wrappers: false
+
+      - name: Cache Android NDK
+        id: cache-android-ndk
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.ANDROID_SDK_ROOT }}/ndk/${{ env.ANDROID_NDK_VERSION }}
+          key: android-ndk-${{ runner.os }}-${{ env.ANDROID_NDK_VERSION }}
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
       - name: Install Android NDK
+        if: steps.cache-android-ndk.outputs.cache-hit != 'true'
         run: |
           yes | sdkmanager --licenses >/dev/null || true
           yes | sdkmanager --install "ndk;${ANDROID_NDK_VERSION}"
@@ -79,7 +91,7 @@ jobs:
       - name: Build APKs
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: ./gradlew clean downloadNightlyAdb :app:assembleDebug :app:assembleRelease
+        run: ./gradlew --no-daemon downloadNightlyAdb :app:assembleDebug :app:assembleRelease --parallel --build-cache --max-workers=$(nproc)
 
       - name: Rename APKs
         run: |
