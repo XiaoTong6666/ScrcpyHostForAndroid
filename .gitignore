@@ -1,6 +1,5 @@
+# IDE
 *.iml
-.gradle
-/local.properties
 /.idea/
 /.idea/caches
 /.idea/libraries
@@ -8,13 +7,23 @@
 /.idea/workspace.xml
 /.idea/navEditor.xml
 /.idea/assetWizardSettings.xml
-.DS_Store
+
+# Local SDK / machine-specific files
+/local.properties
+local.properties
+/gradle/gradle-daemon-jvm.properties
+
+# Build outputs and native build dirs
+/.gradle
 /build
 /captures
 .externalNativeBuild
 .cxx
-local.properties
+
+# Local caches
 /.ccache
+.DS_Store
+
+# Python caches
 __pycache__/
 *.pyc
-/gradle/gradle-daemon-jvm.properties

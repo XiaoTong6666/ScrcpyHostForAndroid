@@ -33,7 +33,7 @@ rootProject.name = "ScrcpyHostForAndroid"
 include(":app")
 include(":sdlAndroidJava")
 
-val scrcpyServerPatchFile = file("patches/scrcpy/server/0001-gradle-agp-compat.patch")
+val scrcpyServerPatchFile = file("patches/0001-scrcpy-server-gradle-agp-compat.patch")
 val scrcpyServerBuildFile = file("scrcpy/server/build.gradle")
 val scrcpyServerBackupFile = file("build/gradle-patches/scrcpy/server.build.gradle.bak")
 var scrcpyServerPatched = false

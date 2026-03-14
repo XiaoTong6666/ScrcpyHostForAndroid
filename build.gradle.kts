@@ -15,6 +15,7 @@ plugins {
 val hostToolsOutputDir = layout.buildDirectory.dir("outputs/host-tools")
 val stagedScrcpyServer = hostToolsOutputDir.map { it.file("scrcpy/scrcpy-server") }
 val scrcpyServerReleaseApkDir = layout.projectDirectory.dir("scrcpy/server/build/outputs/apk/release")
+val embeddedAdbOutputDir = layout.buildDirectory.dir("prebuilt-adb")
 val nightlyAdbRepo = providers.gradleProperty("androidToolsNightlyRepo").orElse("XiaoTong6666/android-tools")
 val nightlyAdbTag = providers.gradleProperty("androidToolsNightlyTag").orElse("nightly")
 
@@ -110,10 +111,10 @@ val downloadNightlyAdb by tasks.registering {
 
     val outputFiles =
         nightlyAdbAssets.map { nightlyAsset ->
-            layout.projectDirectory.file("android-tools/out/termux-adb/${nightlyAsset.abi}/adb").asFile
+            embeddedAdbOutputDir.get().file("${nightlyAsset.abi}/adb").asFile
         }
-    val checksumOutput = layout.projectDirectory.file("android-tools/out/termux-adb/SHA256SUMS").asFile
-    val metadataOutput = layout.projectDirectory.file("android-tools/out/termux-adb/nightly.json").asFile
+    val checksumOutput = embeddedAdbOutputDir.get().file("SHA256SUMS").asFile
+    val metadataOutput = embeddedAdbOutputDir.get().file("nightly.json").asFile
 
     outputs.files(outputFiles + listOf(checksumOutput, metadataOutput))
     outputs.upToDateWhen { false }
@@ -174,8 +175,7 @@ val downloadNightlyAdb by tasks.registering {
                 expectedChecksums[nightlyAsset.assetName]
                     ?: error("SHA256SUMS does not contain ${nightlyAsset.assetName}.")
             val downloadedAsset = File(tempDir, nightlyAsset.assetName)
-            val outputFile =
-                layout.projectDirectory.file("android-tools/out/termux-adb/${nightlyAsset.abi}/adb").asFile
+            val outputFile = embeddedAdbOutputDir.get().file("${nightlyAsset.abi}/adb").asFile
 
             downloadToFile(releaseAsset["browser_download_url"].toString(), downloadedAsset, githubToken, "*/*")
 

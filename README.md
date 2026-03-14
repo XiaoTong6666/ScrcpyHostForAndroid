@@ -41,8 +41,8 @@
 - `app/src/main/jni/`：SDL/JNI Native 入口，负责把 Java/Kotlin 侧解码出的帧桥接到 SDL 渲染层
 - `sdl-android-java/`：SDL Android Java 封装模块
 - `scrcpy/`：`scrcpy` 上游源码子模块，当前主要消费其中的 `server/`
-- `patches/scrcpy/`：对 `scrcpy/server` 的本地补丁
-- `scripts/`：辅助脚本
+- `patches/`：当前放的是 `scrcpy-server` 的本地补丁
+- `scripts/`：开发和调试时用的辅助脚本
 - `.github/workflows/`：主仓库 CI，负责构建 APK 并发布 nightly
 
 构建产物和运行时 staging 主要落在：
@@ -151,7 +151,7 @@ git submodule update --init --recursive
 
 主仓库只负责 Android 客户端、`scrcpy-server` 打包和 APK 组装。构建前需要准备好 Android SDK/NDK、Rust/Cargo 以及必要子模块。
 
-内置 `adb` 的产物来自独立的 `android-tools` 仓库。主仓库通过 Gradle 任务 `downloadNightlyAdb` 拉取 nightly 构建，并在打包 APK 时把这些二进制作为 assets 一起带上。这个任务会在需要时由构建链自动触发；如果你只想单独预取内置 `adb`，也可以手动执行：
+内置 `adb` 来自单独的 `android-tools` 仓库。主仓库通过 Gradle 任务 `downloadNightlyAdb` 拉取 nightly 构建，文件会落到主仓库自己的 `build/prebuilt-adb/` 下，再在打包 APK 时一起带上。这个任务会在需要时由构建链自动触发；如果你只想单独先下载，也可以手动执行：
 
 ```bash
 ./gradlew downloadNightlyAdb
@@ -218,4 +218,4 @@ git submodule update --init --recursive
 - `SDL`：<https://github.com/libsdl-org/SDL/>
 - `android-tools`：<https://github.com/XiaoTong6666/android-tools>
 
-另外，仓库中的 `patches/` 目录包含了针对上游源码的本地补丁，用于适配当前工程的 Android 构建和运行方式。
+另外，仓库里的 `patches/` 现在主要是 `scrcpy-server` 的本地补丁，用来适配当前项目的 Android 构建。

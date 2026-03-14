@@ -6,7 +6,7 @@ plugins {
 val embeddedAdbAbis = listOf("arm64-v8a", "armeabi-v7a")
 val embeddedAdbAssetsDir = layout.buildDirectory.dir("generated/assets/embedded-adb")
 val embeddedScrcpyAssetsDir = layout.buildDirectory.dir("generated/assets/embedded-scrcpy")
-val termuxAdbOutputDir = rootProject.layout.projectDirectory.dir("android-tools/out/termux-adb")
+val termuxAdbOutputDir = rootProject.layout.buildDirectory.dir("prebuilt-adb").get()
 val stagedScrcpyServerOutputFile = rootProject.layout.buildDirectory.file("outputs/host-tools/scrcpy/scrcpy-server")
 val scrcpyServerVersion: String =
     Regex("versionName\\s+\"([^\"]+)\"")
@@ -17,7 +17,8 @@ val scrcpyServerVersion: String =
 
 val verifyEmbeddedAdbAssets by tasks.registering {
     group = "build"
-    description = "Verifies that prebuilt Android adb binaries exist under android-tools/out/termux-adb."
+    description = "Verifies that prebuilt Android adb binaries exist under build/prebuilt-adb."
+    dependsOn(rootProject.tasks.named("downloadNightlyAdb"))
     mustRunAfter(rootProject.tasks.named("downloadNightlyAdb"))
 
     val expectedAdbBinaries = embeddedAdbAbis.map { abi -> termuxAdbOutputDir.file("$abi/adb").asFile }
@@ -35,10 +36,6 @@ val verifyEmbeddedAdbAssets by tasks.registering {
                 appendLine("Missing prebuilt Android adb binaries under ${termuxAdbOutputDir.asFile}.")
                 appendLine("Fetch the latest verified nightly build first:")
                 appendLine("./gradlew downloadNightlyAdb")
-                appendLine("Or build them manually in android-tools, then rerun the APK build:")
-                missingAbis.forEach { abi ->
-                    appendLine("./android-tools/scripts/build-termux-adb.sh $abi")
-                }
             },
         )
     }
@@ -50,7 +47,7 @@ val prepareEmbeddedAdbAssets by tasks.registering(Sync::class) {
     dependsOn(verifyEmbeddedAdbAssets)
     mustRunAfter(rootProject.tasks.named("downloadNightlyAdb"))
 
-    from(termuxAdbOutputDir.asFile) {
+    from(termuxAdbOutputDir) {
         include("**/adb")
         eachFile {
             path = "termux-adb/$path"
