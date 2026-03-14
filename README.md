@@ -151,6 +151,12 @@ git submodule update --init --recursive
 
 主仓库只负责 Android 客户端、`scrcpy-server` 打包和 APK 组装。构建前需要准备好 Android SDK/NDK、Rust/Cargo 以及必要子模块。
 
+内置 `adb` 的产物来自独立的 `android-tools` 仓库。主仓库通过 Gradle 任务 `downloadNightlyAdb` 拉取 nightly 构建，并在打包 APK 时把这些二进制作为 assets 一起带上。这个任务会在需要时由构建链自动触发；如果你只想单独预取内置 `adb`，也可以手动执行：
+
+```bash
+./gradlew downloadNightlyAdb
+```
+
 ## 构建与发布链路
 
 ### 本地构建
@@ -164,13 +170,14 @@ git submodule update --init --recursive
 
 这条链路已经按下面顺序拆开：
 
-1. `stageScrcpyServerBinary` 打包并 staging `scrcpy-server`
-2. `app` 模块把运行时依赖放入 assets
-3. 生成最终 APK
+1. 在需要时拉取内置 `adb` 的 nightly 产物
+2. `stageScrcpyServerBinary` 打包并 staging `scrcpy-server`
+3. `app` 模块把运行时依赖放入 assets
+4. 生成最终 APK
 
 ### GitHub Actions
 
-主仓库 CI 在 [.github/workflows/android.yml](.github/workflows/android.yml)，用于构建 APK 并发布 nightly 预发布版本。
+主仓库 CI 在 [.github/workflows/android.yml](https://github.com/XiaoTong6666/ScrcpyHostForAndroid/actions/workflows/android.yml)，用于构建 APK 并发布 nightly 预发布版本。
 
 ## 上游开源项目分析
 
@@ -178,6 +185,7 @@ git submodule update --init --recursive
 
 - `scrcpy` 顶层协议是 `Apache-2.0`，它是这个项目最核心的上游之一。
 - `SDL` 使用 `zlib` 协议。
+- 内置 `adb` 来自单独的 `android-tools` 仓库：<https://github.com/XiaoTong6666/android-tools>。相关许可证还是按那个仓库和它依赖里的说明来。
 
 基于这些上游组成，当前仓库没有明显必须整体切换到强 copyleft 协议的信号。为了和核心上游保持一致，也为了把专利授权和再分发条款写清楚，这个项目适合使用 `Apache License 2.0` 作为顶层协议。
 
@@ -200,6 +208,7 @@ git submodule update --init --recursive
 
 - `scrcpy/`
 - `SDL/`
+- 单独仓库提供并打包进来的 `adb` 以及相关第三方代码
 
 ## 代码参考
 
@@ -207,5 +216,6 @@ git submodule update --init --recursive
 
 - `scrcpy`：<https://github.com/Genymobile/scrcpy>
 - `SDL`：<https://github.com/libsdl-org/SDL/>
+- `android-tools`：<https://github.com/XiaoTong6666/android-tools>
 
 另外，仓库中的 `patches/` 目录包含了针对上游源码的本地补丁，用于适配当前工程的 Android 构建和运行方式。
