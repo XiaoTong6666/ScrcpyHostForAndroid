@@ -6,8 +6,10 @@ import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.util.Log
 import android.util.TypedValue
 import android.view.Gravity
@@ -20,14 +22,17 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.FrameLayout
+import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.core.graphics.toColorInt
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
@@ -43,9 +48,12 @@ class RemoteDisplayActivity : SDLActivity() {
     private lateinit var endpoint: String
     private lateinit var backendUrl: String
     private lateinit var host: String
+    private var sessionConfig: ScrcpySessionConfig = ScrcpySessionConfig()
     private var port: Int = 5555
+    private var requestAudioEnabled: Boolean = true
     private var currentStatusMessage: String = ""
     private var currentVideoChannelMessage: String = ""
+    private var currentAudioChannelMessage: String = ""
     private var currentPerformanceStats: String = ""
 
     private lateinit var performanceStatsView: TextView
@@ -56,8 +64,16 @@ class RemoteDisplayActivity : SDLActivity() {
     private lateinit var decoderSurfaceHost: ScrcpyStreamContainer
     private lateinit var decoderSurfaceView: SurfaceView
     private var videoStreamClient: ScrcpyVideoStreamClient? = null
+    private var audioStreamClient: ScrcpyAudioStreamClient? = null
     private var controlClient: ScrcpyControlClient? = null
     private var inputController: ScrcpyInputController? = null
+    private val clipboardSyncSession by lazy {
+        ClipboardSyncSession(
+            context = applicationContext,
+            onStatus = { message -> runOnUiThread { setStatus(message) } },
+            onError = { message -> runOnUiThread { setVideoStatus(message) } },
+        )
+    }
     private var remoteTouchGestureActive = false
     private var decoderSurfaceReady = CompletableDeferred<Surface>()
     private var decoderSurface: Surface? = null
@@ -72,13 +88,20 @@ class RemoteDisplayActivity : SDLActivity() {
 
     @Volatile
     private var fallbackInProgress = false
+    private var sessionHandoffInProgress = false
+    private var sessionCloseRequested = false
+    private var reconnectAttemptCount = 0
+    private var reconnectJob: Job? = null
 
     private var targetRefreshRate: Float = 60f
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        host = intent.getStringExtra(EXTRA_HOST).orEmpty()
-        port = intent.getIntExtra(EXTRA_PORT, 5555)
-        backendUrl = intent.getStringExtra(EXTRA_BACKEND_URL).orEmpty()
+        val profile = DeviceProfileStore.fromJsonString(intent.getStringExtra(EXTRA_PROFILE_JSON))
+        host = profile?.host ?: intent.getStringExtra(EXTRA_HOST).orEmpty()
+        port = profile?.adbPort ?: intent.getIntExtra(EXTRA_PORT, 5555)
+        backendUrl = profile?.backendUrl ?: intent.getStringExtra(EXTRA_BACKEND_URL).orEmpty()
+        requestAudioEnabled = profile?.audioEnabled ?: intent.getBooleanExtra(EXTRA_ENABLE_AUDIO, true)
+        sessionConfig = profile?.sessionConfig ?: ScrcpySessionConfig.fromJsonString(intent.getStringExtra(EXTRA_SESSION_CONFIG_JSON))
         endpoint = "$host:$port"
 
         super.onCreate(savedInstanceState)
@@ -116,8 +139,13 @@ class RemoteDisplayActivity : SDLActivity() {
     }
 
     override fun onDestroy() {
+        reconnectJob?.cancel()
+        reconnectJob = null
         videoStreamClient?.stop()
         videoStreamClient = null
+        audioStreamClient?.stop()
+        audioStreamClient = null
+        clipboardSyncSession.detach()
         controlClient?.close()
         controlClient = null
         inputController = null
@@ -125,16 +153,18 @@ class RemoteDisplayActivity : SDLActivity() {
         SdlSessionBridge.setExternalVideoMode(false)
         decoderSurface = null
         activityScope.cancel()
-        Thread {
-            runCatching {
-                runBlocking {
-                    BackendBridgeClient.stopScrcpySession(
-                        context = applicationContext,
-                        backendBaseUrl = backendUrl,
-                    )
+        if (!sessionHandoffInProgress) {
+            Thread {
+                runCatching {
+                    runBlocking {
+                        BackendBridgeClient.stopScrcpySession(
+                            context = applicationContext,
+                            backendBaseUrl = backendUrl,
+                        )
+                    }
                 }
-            }
-        }.start()
+            }.start()
+        }
         super.onDestroy()
     }
 
@@ -200,6 +230,8 @@ class RemoteDisplayActivity : SDLActivity() {
                 backendBaseUrl = backendUrl,
                 host = host,
                 port = port,
+                audioEnabled = requestAudioEnabled,
+                sessionConfig = sessionConfig,
                 sessionMode = mode,
             )
             if (!sessionResult.isSuccess || sessionResult.value == null) {
@@ -215,6 +247,7 @@ class RemoteDisplayActivity : SDLActivity() {
                 } else {
                     setStatus(getString(R.string.session_start_failed))
                     setVideoStatus(sessionResult.message)
+                    scheduleAutoReconnect(sessionResult.message)
                 }
                 return@launch
             }
@@ -237,18 +270,20 @@ class RemoteDisplayActivity : SDLActivity() {
             setVideoStatus("tcp://$streamHost:${session.streamPort}")
             Log.i(
                 tag,
-                "session ready target=${session.target} stream=$streamHost:${session.streamPort} control=$streamHost:${session.controlPort}",
+                "session ready target=${session.target} stream=$streamHost:${session.streamPort} " +
+                    "audio=$streamHost:${session.audioPort} control=$streamHost:${session.controlPort}",
             )
 
             val socketBundleResult = openSessionSockets(
                 host = streamHost,
                 port = session.streamPort,
+                audioEnabled = session.audioEnabled,
                 controlEnabled = session.sessionMode.controlEnabled,
             )
             if (!socketBundleResult.isSuccess || socketBundleResult.value == null) {
                 setStatus(getString(R.string.session_connection_failed))
                 setVideoStatus(socketBundleResult.message)
-                maybeFallbackToVideoOnly(socketBundleResult.message)
+                handleSessionFailure(socketBundleResult.message)
                 return@launch
             }
             val socketBundle = socketBundleResult.value
@@ -258,15 +293,16 @@ class RemoteDisplayActivity : SDLActivity() {
                 socketBundle.closeQuietly()
                 setStatus(getString(R.string.video_surface_unavailable))
                 setVideoStatus(error.message ?: getString(R.string.cannot_create_video_surface))
-                maybeFallbackToVideoOnly(error.message ?: getString(R.string.cannot_create_video_surface))
+                handleSessionFailure(error.message ?: getString(R.string.cannot_create_video_surface))
                 return@launch
             }
 
+            clipboardSyncSession.detach()
             controlClient?.close()
             controlClient = if (session.sessionMode.controlEnabled && session.controlPort > 0 && socketBundle.controlSocket != null) {
                 ScrcpyControlClient(
                     context = applicationContext,
-                    host = session.target.substringBefore(":"),
+                    host = streamHost,
                     port = session.controlPort,
                     connectedSocket = socketBundle.controlSocket,
                     onStatus = { message ->
@@ -277,7 +313,10 @@ class RemoteDisplayActivity : SDLActivity() {
                             setStatus(getString(R.string.control_channel_error_mode, session.sessionMode.wireValue))
                             setVideoStatus(message)
                         }
-                        maybeFallbackToVideoOnly(getString(R.string.control_channel_error_msg, message))
+                        handleSessionFailure(getString(R.string.control_channel_error_msg, message))
+                    },
+                    onClipboardText = { text ->
+                        runOnUiThread { clipboardSyncSession.onRemoteClipboardText(text) }
                     },
                 )
             } else {
@@ -285,19 +324,49 @@ class RemoteDisplayActivity : SDLActivity() {
             }
             runCatching { controlClient?.connect() }
                 .onFailure { error ->
+                    clipboardSyncSession.detach()
                     socketBundle.closeQuietly()
                     setStatus(getString(R.string.control_channel_error))
                     setVideoStatus(error.message ?: getString(R.string.cannot_connect_control_channel))
-                    maybeFallbackToVideoOnly(error.message ?: getString(R.string.cannot_connect_control_channel))
+                    handleSessionFailure(error.message ?: getString(R.string.cannot_connect_control_channel))
                     return@launch
                 }
+            controlClient?.let { client ->
+                clipboardSyncSession.attach(
+                    client = client,
+                    automaticSyncEnabled = sessionConfig.autoSyncClipboard,
+                )
+            }
             inputController = controlClient?.let { ScrcpyInputController(it) }
             inputController?.setDisplayMode(ScrcpyInputController.DisplayMode.FIT_CENTER)
+            applyPostConnectOptions()
+
+            audioStreamClient?.stop()
+            audioStreamClient = if (session.audioEnabled && session.audioPort > 0 && socketBundle.audioSocket != null) {
+                ScrcpyAudioStreamClient(
+                    context = applicationContext,
+                    streamHost = streamHost,
+                    streamPort = session.audioPort,
+                    connectedSocket = socketBundle.audioSocket,
+                    onStatus = { message ->
+                        runOnUiThread { setAudioStatus(message) }
+                    },
+                    onError = { message ->
+                        runOnUiThread { setAudioStatus(message) }
+                    },
+                ).also { client ->
+                    setAudioStatus(getString(R.string.audio_stream_starting))
+                    client.start()
+                }
+            } else {
+                setAudioStatus(getString(R.string.audio_stream_off))
+                null
+            }
 
             videoStreamClient?.stop()
             videoStreamClient = ScrcpyVideoStreamClient(
                 context = applicationContext,
-                streamHost = session.target.substringBefore(":"),
+                streamHost = streamHost,
                 streamPort = session.streamPort,
                 ultraLowLatency = false,
                 connectedSocket = socketBundle.videoSocket,
@@ -315,6 +384,7 @@ class RemoteDisplayActivity : SDLActivity() {
                 },
                 onVideoConfig = { codecName, width, height ->
                     runOnUiThread {
+                        markSessionEstablished()
                         activeVideoWidth = width
                         activeVideoHeight = height
                         applyOrientationForVideo(width, height)
@@ -330,7 +400,10 @@ class RemoteDisplayActivity : SDLActivity() {
                         setStatus(getString(R.string.video_stream_error_mode, session.sessionMode.wireValue))
                         setVideoStatus(message)
                     }
-                    maybeFallbackToVideoOnly(getString(R.string.video_stream_error_msg, message))
+                    handleSessionFailure(getString(R.string.video_stream_error_msg, message))
+                },
+                onEnded = {
+                    handleSessionFailure(getString(R.string.video_stream_closed))
                 },
             ).also { client ->
                 if (controlClient == null) {
@@ -344,6 +417,7 @@ class RemoteDisplayActivity : SDLActivity() {
     private suspend fun openSessionSockets(
         host: String,
         port: Int,
+        audioEnabled: Boolean,
         controlEnabled: Boolean,
     ): BridgeCallResult<ScrcpySocketBundle> = withContext(Dispatchers.IO) {
         runCatching {
@@ -361,6 +435,22 @@ class RemoteDisplayActivity : SDLActivity() {
                 attempts = 40,
                 backoffMillis = 50L,
             )
+            val audioSocket = if (audioEnabled) {
+                try {
+                    connectSocketWithRetries(
+                        host = host,
+                        port = port,
+                        label = "audio",
+                        attempts = 60,
+                        backoffMillis = 50L,
+                    )
+                } catch (error: Exception) {
+                    runCatching { videoSocket.close() }
+                    throw error
+                }
+            } else {
+                null
+            }
             val controlSocket = if (controlEnabled) {
                 try {
                     connectSocketWithRetries(
@@ -372,6 +462,7 @@ class RemoteDisplayActivity : SDLActivity() {
                     )
                 } catch (error: Exception) {
                     runCatching { videoSocket.close() }
+                    runCatching { audioSocket?.close() }
                     throw error
                 }
             } else {
@@ -380,7 +471,7 @@ class RemoteDisplayActivity : SDLActivity() {
 
             BridgeCallResult(
                 isSuccess = true,
-                value = ScrcpySocketBundle(videoSocket = videoSocket, controlSocket = controlSocket),
+                value = ScrcpySocketBundle(videoSocket = videoSocket, audioSocket = audioSocket, controlSocket = controlSocket),
                 message = "scrcpy sockets connected",
             )
         }.getOrElse { error ->
@@ -420,14 +511,18 @@ class RemoteDisplayActivity : SDLActivity() {
         throw (lastError ?: IllegalStateException("scrcpy $label socket connect failed"))
     }
 
-    private fun maybeFallbackToVideoOnly(reason: String) {
-        if (activeSessionMode != ScrcpySessionMode.CONTROL_REWORK) return
-        if (fallbackInProgress) return
+    private fun maybeFallbackToVideoOnly(reason: String): Boolean {
+        if (sessionCloseRequested || sessionHandoffInProgress) return false
+        if (activeSessionMode != ScrcpySessionMode.CONTROL_REWORK) return false
+        if (fallbackInProgress) return false
         fallbackInProgress = true
         Log.w(tag, "fallback to video-only mode, reason=$reason")
         activityScope.launch {
             videoStreamClient?.stop()
             videoStreamClient = null
+            audioStreamClient?.stop()
+            audioStreamClient = null
+            clipboardSyncSession.detach()
             controlClient?.close()
             controlClient = null
             inputController = null
@@ -444,6 +539,7 @@ class RemoteDisplayActivity : SDLActivity() {
                 allowFallback = false,
             )
         }
+        return true
     }
 
     private fun installDecoderSurfaceView() {
@@ -623,6 +719,7 @@ class RemoteDisplayActivity : SDLActivity() {
 
         currentStatusMessage = getString(R.string.waiting_for_scrcpy_session)
         currentVideoChannelMessage = getString(R.string.not_established)
+        currentAudioChannelMessage = getString(R.string.audio_stream_off)
 
         addView(makeLabel("Performance metrics"))
         performanceStatsView = TextView(this@RemoteDisplayActivity).apply {
@@ -643,6 +740,7 @@ class RemoteDisplayActivity : SDLActivity() {
             append(getString(R.string.stats_endpoint_label, endpoint)).appendLine()
             append(getString(R.string.stats_backend_label, backendUrl)).appendLine()
             append(getString(R.string.stats_status_label, currentStatusMessage)).appendLine()
+            append(getString(R.string.stats_audio_label, currentAudioChannelMessage)).appendLine()
             if (currentPerformanceStats == getString(R.string.stats_waiting_video)) {
                 append(getString(R.string.stats_video_label, currentVideoChannelMessage)).appendLine()
             }
@@ -660,9 +758,68 @@ class RemoteDisplayActivity : SDLActivity() {
         addView(
             Button(this@RemoteDisplayActivity).apply {
                 text = getString(R.string.return_to_connect_page)
-                setOnClickListener { finish() }
+                setOnClickListener {
+                    sessionCloseRequested = true
+                    finish()
+                }
             },
         )
+        addView(
+            Button(this@RemoteDisplayActivity).apply {
+                text = getString(R.string.switch_to_floating_window)
+                setOnClickListener { launchFloatingWindowMode() }
+            },
+        )
+        addView(makeLabel(getString(R.string.remote_controls)).apply { setPadding(0, dp(12), 0, dp(4)) })
+        addView(makeHintValue(getString(R.string.remote_controls_hint)))
+        addView(buildControlActionRow(ScrcpyRemoteActionLayout.primaryRow))
+        addView(buildControlActionRow(ScrcpyRemoteActionLayout.secondaryRow))
+    }
+
+    private fun launchFloatingWindowMode() {
+        if (!Settings.canDrawOverlays(this)) {
+            setStatus(getString(R.string.overlay_permission_required))
+            startActivity(
+                Intent(
+                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:$packageName"),
+                ),
+            )
+            return
+        }
+        sessionCloseRequested = true
+        sessionHandoffInProgress = true
+        FloatingDisplayService.launch(
+            context = this,
+            profile = DeviceProfile(
+                name = endpoint,
+                host = host,
+                adbPort = port,
+                backendUrl = backendUrl,
+                audioEnabled = requestAudioEnabled,
+                sessionConfig = sessionConfig,
+            ),
+        )
+        finish()
+    }
+
+    private fun applyPostConnectOptions() {
+        val client = controlClient
+        if (sessionConfig.wakeOnConnect && !sessionConfig.turnScreenOff) {
+            client?.sendSetDisplayPower(true)
+        }
+        if (!sessionConfig.turnScreenOff) {
+            return
+        }
+        if (client == null) {
+            setVideoStatus(getString(R.string.turn_screen_off_requires_control))
+            return
+        }
+        if (client.sendSetDisplayPower(false)) {
+            setStatus(getString(R.string.turn_screen_off_requested))
+        } else {
+            setVideoStatus(getString(R.string.turn_screen_off_failed))
+        }
     }
 
     private fun toggleOverlayCards() {
@@ -728,10 +885,171 @@ class RemoteDisplayActivity : SDLActivity() {
         runOnUiThread { updatePerformanceStatsText() }
     }
 
+    private fun setAudioStatus(text: String) {
+        Log.i(tag, "audio-status: $text")
+        currentAudioChannelMessage = text
+        runOnUiThread { updatePerformanceStatsText() }
+    }
+
+    private fun markSessionEstablished() {
+        reconnectAttemptCount = 0
+        reconnectJob?.cancel()
+        reconnectJob = null
+        sessionCloseRequested = false
+    }
+
+    private fun handleSessionFailure(reason: String) {
+        if (maybeFallbackToVideoOnly(reason)) {
+            return
+        }
+        scheduleAutoReconnect(reason)
+    }
+
+    private fun scheduleAutoReconnect(reason: String): Boolean {
+        if (!sessionConfig.autoReconnect || sessionHandoffInProgress || sessionCloseRequested) {
+            return false
+        }
+        if (reconnectJob?.isActive == true) {
+            return true
+        }
+
+        val maxAttempts = sessionConfig.autoReconnectMaxAttempts.coerceAtLeast(1)
+        if (reconnectAttemptCount >= maxAttempts) {
+            setStatus(getString(R.string.auto_reconnect_exhausted))
+            setVideoStatus(reason)
+            return false
+        }
+
+        val nextAttempt = reconnectAttemptCount + 1
+        reconnectAttemptCount = nextAttempt
+        val delaySeconds = sessionConfig.autoReconnectDelaySeconds.coerceIn(1, 60)
+        reconnectJob = activityScope.launch {
+            videoStreamClient?.stop()
+            videoStreamClient = null
+            audioStreamClient?.stop()
+            audioStreamClient = null
+            clipboardSyncSession.detach()
+            controlClient?.close()
+            controlClient = null
+            inputController = null
+            runCatching {
+                BackendBridgeClient.stopScrcpySession(
+                    context = applicationContext,
+                    backendBaseUrl = backendUrl,
+                )
+            }
+            setStatus(getString(R.string.auto_reconnect_scheduled, nextAttempt, maxAttempts, delaySeconds))
+            setVideoStatus(reason)
+            delay(delaySeconds * 1_000L)
+            if (sessionHandoffInProgress || sessionCloseRequested || !sessionConfig.autoReconnect) {
+                return@launch
+            }
+            setStatus(getString(R.string.auto_reconnect_attempting, nextAttempt, maxAttempts))
+            startScrcpyVideoPipelineWithMode(
+                mode = ScrcpySessionMode.CONTROL_REWORK,
+                allowFallback = true,
+            )
+        }
+        return true
+    }
+
+    private fun buildControlActionRow(actions: List<ScrcpyRemoteAction>): HorizontalScrollView = HorizontalScrollView(this).apply {
+        isHorizontalScrollBarEnabled = false
+        isFillViewport = true
+        setPadding(0, dp(4), 0, 0)
+        addView(
+            LinearLayout(this@RemoteDisplayActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                actions.forEachIndexed { index, action ->
+                    addView(buildControlActionButton(action))
+                    if (index < actions.lastIndex) {
+                        addView(
+                            View(this@RemoteDisplayActivity).apply {
+                                layoutParams = LinearLayout.LayoutParams(dp(8), 1)
+                            },
+                        )
+                    }
+                }
+            },
+        )
+    }
+
+    private fun buildControlActionButton(action: ScrcpyRemoteAction): Button = Button(this).apply {
+        text = getString(action.labelRes)
+        minimumWidth = 0
+        minWidth = 0
+        setOnClickListener { performRemoteAction(action) }
+    }
+
+    private fun performRemoteAction(action: ScrcpyRemoteAction) {
+        val client = controlClient
+        if (client == null) {
+            setStatus(getString(R.string.remote_action_requires_control))
+            return
+        }
+
+        when (action) {
+            ScrcpyRemoteAction.BACK -> reportRemoteActionResult(action, client.sendBackOrScreenOnPress())
+
+            ScrcpyRemoteAction.HOME -> reportRemoteActionResult(action, client.sendKeyPress(KeyEvent.KEYCODE_HOME))
+
+            ScrcpyRemoteAction.RECENTS -> reportRemoteActionResult(action, client.sendKeyPress(KeyEvent.KEYCODE_APP_SWITCH))
+
+            ScrcpyRemoteAction.NOTIFICATIONS -> reportRemoteActionResult(action, client.expandNotificationPanel())
+
+            ScrcpyRemoteAction.SETTINGS -> reportRemoteActionResult(action, client.expandSettingsPanel())
+
+            ScrcpyRemoteAction.ROTATE -> reportRemoteActionResult(action, client.rotateDevice())
+
+            ScrcpyRemoteAction.POWER -> reportRemoteActionResult(action, client.sendKeyPress(KeyEvent.KEYCODE_POWER))
+
+            ScrcpyRemoteAction.SCREENSHOT -> reportRemoteActionResult(action, client.sendKeyPress(KeyEvent.KEYCODE_SYSRQ))
+
+            ScrcpyRemoteAction.SEND_CLIPBOARD -> {
+                val text = LocalClipboardBridge.readPlainText(this)
+                if (text == null) {
+                    setStatus(getString(R.string.local_clipboard_empty))
+                    return
+                }
+                if (client.sendClipboard(text, paste = false)) {
+                    setStatus(getString(R.string.remote_action_sent, getString(action.labelRes)))
+                } else {
+                    setVideoStatus(getString(R.string.remote_clipboard_send_failed))
+                }
+            }
+
+            ScrcpyRemoteAction.RECEIVE_CLIPBOARD -> {
+                if (client.requestClipboard()) {
+                    setStatus(getString(R.string.remote_clipboard_requesting))
+                } else {
+                    setVideoStatus(getString(R.string.remote_clipboard_request_failed))
+                }
+            }
+        }
+    }
+
+    private fun reportRemoteActionResult(
+        action: ScrcpyRemoteAction,
+        success: Boolean,
+    ) {
+        if (success) {
+            setStatus(getString(R.string.remote_action_sent, getString(action.labelRes)))
+        } else {
+            setVideoStatus(getString(R.string.remote_action_failed, getString(action.labelRes)))
+        }
+    }
+
     private fun makeLabel(text: String): TextView = TextView(this).apply {
         setText(text)
         setTextColor(Color.parseColor("#B0E4FF"))
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+    }
+
+    private fun makeHintValue(text: String): TextView = TextView(this).apply {
+        setText(text)
+        setTextColor(Color.parseColor("#A8C7E8"))
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+        setPadding(0, dp(2), 0, dp(8))
     }
 
     private fun makeValue(text: String): TextView = TextView(this).apply {
@@ -790,32 +1108,44 @@ class RemoteDisplayActivity : SDLActivity() {
     ).toInt()
 
     companion object {
+        private const val EXTRA_PROFILE_JSON = "extra_profile_json"
+        private const val EXTRA_SESSION_CONFIG_JSON = "extra_session_config_json"
         private const val EXTRA_HOST = "extra_host"
         private const val EXTRA_PORT = "extra_port"
         private const val EXTRA_BACKEND_URL = "extra_backend_url"
+        private const val EXTRA_ENABLE_AUDIO = "extra_enable_audio"
+
+        fun createIntent(
+            context: Context,
+            profile: DeviceProfile,
+        ): Intent = createIntent(
+            context = context,
+            host = profile.host,
+            port = profile.adbPort,
+            backendUrl = profile.backendUrl,
+            enableAudio = profile.audioEnabled,
+            sessionConfig = profile.sessionConfig,
+            profileJson = DeviceProfileStore.toJsonString(profile),
+        )
 
         fun createIntent(
             context: Context,
             host: String,
             port: Int,
             backendUrl: String,
+            enableAudio: Boolean,
+            sessionConfig: ScrcpySessionConfig = ScrcpySessionConfig(),
+            profileJson: String? = null,
         ): Intent = Intent(context, RemoteDisplayActivity::class.java).apply {
+            putExtra(EXTRA_PROFILE_JSON, profileJson)
             putExtra(EXTRA_HOST, host)
             putExtra(EXTRA_PORT, port)
             putExtra(EXTRA_BACKEND_URL, backendUrl)
+            putExtra(EXTRA_ENABLE_AUDIO, enableAudio)
+            putExtra(EXTRA_SESSION_CONFIG_JSON, sessionConfig.toJsonString())
             if (context !is Activity) {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
         }
-    }
-}
-
-private data class ScrcpySocketBundle(
-    val videoSocket: Socket,
-    val controlSocket: Socket?,
-) {
-    fun closeQuietly() {
-        runCatching { videoSocket.close() }
-        runCatching { controlSocket?.close() }
     }
 }

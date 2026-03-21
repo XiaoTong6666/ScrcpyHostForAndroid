@@ -30,25 +30,23 @@ val nightlyAdbAssets =
         NightlyAdbAsset(abi = "armeabi-v7a", assetName = "adb-armeabi-v7a"),
     )
 
-fun readHttpBody(connection: HttpURLConnection): String =
-    (connection.errorStream ?: connection.inputStream).bufferedReader().use { it.readText() }
+fun readHttpBody(connection: HttpURLConnection): String = (connection.errorStream ?: connection.inputStream).bufferedReader().use { it.readText() }
 
 fun openHttpConnection(
     url: String,
     token: String?,
     accept: String,
-): HttpURLConnection =
-    (URI(url).toURL().openConnection() as HttpURLConnection).apply {
-        instanceFollowRedirects = true
-        connectTimeout = 30_000
-        readTimeout = 120_000
-        requestMethod = "GET"
-        setRequestProperty("Accept", accept)
-        setRequestProperty("User-Agent", "scrcpyandroid2-gradle")
-        if (!token.isNullOrBlank()) {
-            setRequestProperty("Authorization", "Bearer $token")
-        }
+): HttpURLConnection = (URI(url).toURL().openConnection() as HttpURLConnection).apply {
+    instanceFollowRedirects = true
+    connectTimeout = 30_000
+    readTimeout = 120_000
+    requestMethod = "GET"
+    setRequestProperty("Accept", accept)
+    setRequestProperty("User-Agent", "scrcpyandroid2-gradle")
+    if (!token.isNullOrBlank()) {
+        setRequestProperty("Authorization", "Bearer $token")
     }
+}
 
 fun httpGetText(
     url: String,

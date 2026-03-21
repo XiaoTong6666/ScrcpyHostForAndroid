@@ -40,6 +40,7 @@ class ScrcpyVideoStreamClient(
     private val onVideoConfig: (codecName: String, width: Int, height: Int) -> Unit,
     private val onPerformanceStats: ((String) -> Unit)? = null,
     private val onError: (String) -> Unit,
+    private val onEnded: (() -> Unit)? = null,
 ) {
     private val tag = "ScrcpyVideoStream"
     private val stopRequested = AtomicBoolean(false)
@@ -291,14 +292,16 @@ class ScrcpyVideoStreamClient(
             if (!stopRequested.get()) {
                 runCatching { queueEndOfStream(localDecoder) }
                 runCatching { localOutputWorker.join(1_500) }
+                onStatus(context.getString(R.string.video_stream_ended))
+                onEnded?.invoke()
             }
-            onStatus(context.getString(R.string.video_stream_ended))
         } catch (_: EOFException) {
             if (!stopRequested.get()) {
                 Log.w(tag, "video stream EOF")
                 runCatching { localDecoder?.let { queueEndOfStream(it) } }
                 runCatching { outputWorker?.join(1_500) }
                 onStatus(context.getString(R.string.video_stream_closed))
+                onEnded?.invoke()
             }
         } catch (error: Exception) {
             if (!stopRequested.get()) {

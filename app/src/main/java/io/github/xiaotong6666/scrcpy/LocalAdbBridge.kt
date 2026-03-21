@@ -69,6 +69,8 @@ object LocalAdbBridge {
         context: Context,
         host: String,
         port: Int,
+        audioEnabled: Boolean,
+        sessionConfig: ScrcpySessionConfig,
         sessionMode: ScrcpySessionMode,
     ): BridgeCallResult<ScrcpySessionInfo> = withContext(Dispatchers.IO) {
         bridgeLock.withLock {
@@ -125,9 +127,11 @@ object LocalAdbBridge {
                 val socketName = "scrcpy_${String.format("%08x", scid)}"
                 val adbLocalPort = allocateLocalTcpPort()
                 val streamPort = adbLocalPort
+                val audioPort = if (audioEnabled) adbLocalPort else 0
                 val controlEnabled = sessionMode.controlEnabled
                 val controlPort = if (controlEnabled) adbLocalPort else 0
                 val videoOptions = ScrcpyVideoTuning.chooseServerVideoOptions(context)
+                val resolvedConfig = sessionConfig.resolve(videoOptions)
 
                 runtime.runAdb("-s", target, "forward", "--remove", "tcp:$adbLocalPort")
                 val forwardVideoResult = runtime.runAdb(
@@ -149,7 +153,8 @@ object LocalAdbBridge {
                     "scid=${String.format("%08x", scid)}",
                     "log_level=debug",
                     "video=true",
-                    "audio=false",
+                    "audio=$audioEnabled",
+                    "audio_codec=${resolvedConfig.audioCodec}",
                     "control=$controlEnabled",
                     "tunnel_forward=true",
                     "cleanup=true",
@@ -157,10 +162,16 @@ object LocalAdbBridge {
                     "send_dummy_byte=false",
                     "send_codec_meta=true",
                     "send_frame_meta=true",
-                    "video_codec=${videoOptions.codecName}",
-                    "max_fps=${videoOptions.maxFps}",
-                    "max_size=${videoOptions.maxSize}",
-                    "video_bit_rate=${videoOptions.bitRate}",
+                    "power_on=${resolvedConfig.wakeOnConnect && !resolvedConfig.turnScreenOff}",
+                    "show_touches=${resolvedConfig.showTouches}",
+                    "stay_awake=${resolvedConfig.stayAwake}",
+                    "power_off_on_close=${resolvedConfig.powerOffOnClose}",
+                    "video_codec=${resolvedConfig.videoCodec}",
+                    "max_fps=${resolvedConfig.maxFps}",
+                    "max_size=${resolvedConfig.maxSize}",
+                    "video_bit_rate=${resolvedConfig.videoBitRate}",
+                ) + listOfNotNull(
+                    resolvedConfig.audioBitRate?.let { "audio_bit_rate=$it" },
                 )
                 val remoteCmd = buildString {
                     append("CLASSPATH=")
@@ -221,10 +232,10 @@ object LocalAdbBridge {
                 }
                 Log.i(
                     LOCAL_ADB_BRIDGE_TAG,
-                    "session ready target=$target streamPort=$streamPort controlPort=$controlPort " +
+                    "session ready target=$target streamPort=$streamPort audioPort=$audioPort controlPort=$controlPort " +
                         "mode=${sessionMode.wireValue} socketName=$socketName scid=${String.format("%08x", scid)} " +
-                        "codec=${videoOptions.codecName} maxSize=${videoOptions.maxSize} " +
-                        "maxFps=${videoOptions.maxFps} bitRate=${videoOptions.bitRate}",
+                        "videoCodec=${resolvedConfig.videoCodec} audioCodec=${resolvedConfig.audioCodec} " +
+                        "maxSize=${resolvedConfig.maxSize} maxFps=${resolvedConfig.maxFps} bitRate=${resolvedConfig.videoBitRate}",
                 )
 
                 activeSession = LocalScrcpySession(
@@ -241,9 +252,13 @@ object LocalAdbBridge {
                     value = ScrcpySessionInfo(
                         target = target,
                         streamPort = streamPort,
+                        audioPort = audioPort,
                         controlPort = controlPort,
-                        videoCodecId = videoOptions.codecId,
-                        videoCodec = videoOptions.codecName,
+                        videoCodecId = resolvedConfig.videoCodecId,
+                        videoCodec = resolvedConfig.videoCodec,
+                        audioCodecId = resolvedConfig.audioCodecId,
+                        audioCodec = resolvedConfig.audioCodec,
+                        audioEnabled = audioEnabled,
                         sessionMode = sessionMode,
                     ),
                     message = "scrcpy session started for $target",
@@ -257,6 +272,61 @@ object LocalAdbBridge {
             }
         }
     }
+
+    suspend fun pair(
+        context: Context,
+        host: String,
+        port: Int,
+        pairingCode: String,
+    ): BridgeCallResult<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            val trimmedHost = host.trim()
+            val trimmedCode = pairingCode.trim()
+            require(trimmedHost.isNotBlank()) { "Pair host is blank" }
+            require(trimmedCode.isNotBlank()) { "Pairing code is blank" }
+            require(port in 1..65535) { "Invalid pairing port: $port" }
+
+            val runtime = ensureRuntimeFiles(context)
+            val startServerResult = runtime.ensureServer()
+            if (startServerResult.exitCode != 0) {
+                return@runCatching BridgeCallResult(
+                    isSuccess = false,
+                    message = startServerResult.output.ifBlank { "adb start-server failed" },
+                )
+            }
+
+            val pairResult = runtime.runAdb("pair", "$trimmedHost:$port", trimmedCode)
+            val output = pairResult.output.lowercase()
+            val ok = pairResult.exitCode == 0 &&
+                (
+                    output.contains("successfully paired") ||
+                        output.contains("already paired") ||
+                        output.contains("paired to")
+                    )
+            if (!ok) {
+                return@runCatching BridgeCallResult(
+                    isSuccess = false,
+                    message = pairResult.output.ifBlank { "adb pair failed: $trimmedHost:$port" },
+                )
+            }
+
+            BridgeCallResult(
+                isSuccess = true,
+                value = Unit,
+                message = pairResult.output.ifBlank { "paired to $trimmedHost:$port" },
+            )
+        }.getOrElse { error ->
+            Log.e(LOCAL_ADB_BRIDGE_TAG, "pair failed", error)
+            BridgeCallResult(
+                isSuccess = false,
+                message = error.message ?: context.getString(R.string.local_adb_pair_failed),
+            )
+        }
+    }
+
+    suspend fun discoverConnectService(context: Context): BridgeCallResult<AdbMdnsService> = AdbMdnsDiscoverer.discoverConnectService(context)
+
+    suspend fun discoverPairingService(context: Context): BridgeCallResult<AdbMdnsService> = AdbMdnsDiscoverer.discoverPairingService(context)
 
     suspend fun stopSession(context: Context? = null): BridgeCallResult<Unit> = withContext(Dispatchers.IO) {
         bridgeLock.withLock {

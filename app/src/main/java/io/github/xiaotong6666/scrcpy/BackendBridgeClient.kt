@@ -17,9 +17,13 @@ data class BridgeCallResult<T>(
 data class ScrcpySessionInfo(
     val target: String,
     val streamPort: Int,
+    val audioPort: Int,
     val controlPort: Int,
     val videoCodecId: Int,
     val videoCodec: String,
+    val audioCodecId: Int,
+    val audioCodec: String,
+    val audioEnabled: Boolean,
     val sessionMode: ScrcpySessionMode,
 )
 
@@ -68,17 +72,65 @@ object BackendBridgeClient {
         }
     }
 
+    suspend fun pairAdb(
+        context: Context,
+        backendBaseUrl: String,
+        host: String,
+        port: Int,
+        pairingCode: String,
+    ): BridgeCallResult<Unit> {
+        if (isLocalBridge(backendBaseUrl)) {
+            Log.i(TAG, "pairAdb -> local bridge: $host:$port")
+            return LocalAdbBridge.pair(context, host, port, pairingCode)
+        }
+        return BridgeCallResult(
+            isSuccess = false,
+            message = context.getString(R.string.backend_pair_not_supported),
+        )
+    }
+
+    suspend fun discoverConnectService(
+        context: Context,
+        backendBaseUrl: String,
+    ): BridgeCallResult<AdbMdnsService> {
+        if (isLocalBridge(backendBaseUrl)) {
+            Log.i(TAG, "discoverConnectService -> local bridge")
+            return LocalAdbBridge.discoverConnectService(context)
+        }
+        return BridgeCallResult(
+            isSuccess = false,
+            message = context.getString(R.string.backend_discovery_not_supported),
+        )
+    }
+
+    suspend fun discoverPairingService(
+        context: Context,
+        backendBaseUrl: String,
+    ): BridgeCallResult<AdbMdnsService> {
+        if (isLocalBridge(backendBaseUrl)) {
+            Log.i(TAG, "discoverPairingService -> local bridge")
+            return LocalAdbBridge.discoverPairingService(context)
+        }
+        return BridgeCallResult(
+            isSuccess = false,
+            message = context.getString(R.string.backend_discovery_not_supported),
+        )
+    }
+
     suspend fun startScrcpySession(
         context: Context,
         backendBaseUrl: String,
         host: String,
         port: Int,
+        audioEnabled: Boolean = true,
+        sessionConfig: ScrcpySessionConfig = ScrcpySessionConfig(),
         sessionMode: ScrcpySessionMode = ScrcpySessionMode.CONTROL_REWORK,
     ): BridgeCallResult<ScrcpySessionInfo> {
         if (isLocalBridge(backendBaseUrl)) {
             Log.i(TAG, "startScrcpySession -> local bridge: $host:$port mode=${sessionMode.wireValue}")
-            return LocalAdbBridge.startSession(context, host, port, sessionMode)
+            return LocalAdbBridge.startSession(context, host, port, audioEnabled, sessionConfig, sessionMode)
         }
+        val resolvedConfig = sessionConfig.resolve(ScrcpyVideoTuning.chooseServerVideoOptions(context))
         Log.i(
             TAG,
             "startScrcpySession -> http bridge: $backendBaseUrl, target=$host:$port, mode=${sessionMode.wireValue}",
@@ -90,7 +142,22 @@ object BackendBridgeClient {
             body = JSONObject()
                 .put("host", host)
                 .put("port", port)
-                .put("sessionMode", sessionMode.wireValue),
+                .put("audioEnabled", audioEnabled)
+                .put("sessionMode", sessionMode.wireValue)
+                .put("videoCodec", sessionConfig.videoCodec)
+                .put("audioCodec", sessionConfig.audioCodec)
+                .put("maxSize", sessionConfig.maxSize)
+                .put("maxFps", sessionConfig.maxFps)
+                .put("videoBitRate", resolvedConfig.videoBitRate)
+                .put("audioBitRate", resolvedConfig.audioBitRate ?: 0)
+                .put("wakeOnConnect", sessionConfig.wakeOnConnect)
+                .put("turnScreenOff", sessionConfig.turnScreenOff)
+                .put("stayAwake", sessionConfig.stayAwake)
+                .put("powerOffOnClose", sessionConfig.powerOffOnClose)
+                .put("showTouches", sessionConfig.showTouches)
+                .put("autoReconnect", sessionConfig.autoReconnect)
+                .put("autoReconnectMaxAttempts", sessionConfig.autoReconnectMaxAttempts)
+                .put("autoReconnectDelaySeconds", sessionConfig.autoReconnectDelaySeconds),
         ) { payload ->
             val ok = payload.optBoolean("ok", false)
             val sessionInfo = if (ok) {
@@ -100,16 +167,22 @@ object BackendBridgeClient {
                 ScrcpySessionInfo(
                     target = payload.optString("target", "$host:$port"),
                     streamPort = payload.optInt("streamPort", 0),
+                    audioPort = payload.optInt("audioPort", 0),
                     controlPort = payload.optInt("controlPort", 0),
                     videoCodecId = payload.optInt("videoCodecId", 0),
                     videoCodec = payload.optString("videoCodec", "unknown"),
+                    audioCodecId = payload.optInt("audioCodecId", 0),
+                    audioCodec = payload.optString("audioCodec", "unknown"),
+                    audioEnabled = payload.optBoolean("audioEnabled", audioEnabled),
                     sessionMode = resolvedMode,
                 )
             } else {
                 null
             }
             val hasRequiredPorts = sessionInfo?.let {
-                it.streamPort > 0 && (!it.sessionMode.controlEnabled || it.controlPort > 0)
+                it.streamPort > 0 &&
+                    (!it.audioEnabled || it.audioPort > 0) &&
+                    (!it.sessionMode.controlEnabled || it.controlPort > 0)
             } ?: false
             BridgeCallResult(
                 isSuccess = ok && hasRequiredPorts,
